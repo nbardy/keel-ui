@@ -19,7 +19,9 @@ use kit_state::{Act, Cx, Host, Ident, Intent, Life, Store, wake_due};
 use kit_view::testing::text_system;
 use kit_view::{CosmicText, NoWorld, Node, TextStyle, column, row, text};
 use kit_wgpu::{FrameTarget, WgpuUi};
-use kit_widgets::{Check, Checkbox, Icon, Ink, PathEl, Press, Ui, checkbox};
+use kit_widgets::{
+    Check, Checkbox, Icon, Ink, PathEl, Press, Ui, VirtualList, checkbox, virtual_items,
+};
 
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 800;
@@ -39,6 +41,9 @@ const COIN: Icon = Icon::new(
 /// The app model: how many rows the server lists, and what the UI asked for.
 struct Bench {
     rows: usize,
+    /// The row ids `0..rows`, as the virtual list's items.
+    ids: Vec<usize>,
+    listing: Listing,
     buys: u64,
     now: Time,
 }
@@ -56,8 +61,28 @@ impl Host for Bench {
     }
 }
 
+/// How the rows are shown: every row built each frame, or a scroll area that builds the rows in view.
+#[derive(Clone, Copy)]
+enum Listing {
+    Plain,
+    Virtual,
+}
+
+/// Row height of the virtual list, about what a plain row (label, checkbox, button) measures.
+const VIRTUAL_ROW: f64 = 32.0;
+
 #[derive(Clone, Debug, PartialEq)]
 struct Buy(usize);
+
+/// The virtual list's scroll area.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+struct ListKey;
+
+impl Ident<Bench> for ListKey {
+    fn life(&self, _: &Bench) -> Life {
+        Life::Live
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Row(usize);
@@ -77,44 +102,59 @@ enum RowEvent {
     Buy,
 }
 
-/// The view: a function from app data to a value tree. It runs every frame.
+/// The view: a function from app data to a value tree. It runs every frame. One dispatch on how rows are listed.
 fn view(cx: &Cx<'_, Bench>, theme: &Theme) -> Node<Intent<Bench>> {
+    match cx.app().listing {
+        Listing::Plain => column((0..cx.app().rows).map(|i| bench_row(cx, theme, i))),
+        Listing::Virtual => column([virtual_items(
+            cx,
+            VirtualList {
+                key: ListKey,
+                items: &cx.app().ids,
+                row_height: VIRTUAL_ROW,
+                height: f64::from(HEIGHT),
+                row: &|&i| bench_row(cx, theme, i),
+            },
+        )]),
+    }
+}
+
+/// One row: a label, a checkbox and a button, with local state keyed by the row's id.
+fn bench_row(cx: &Cx<'_, Bench>, theme: &Theme, i: usize) -> Node<Intent<Bench>> {
     let ui = Ui::new(theme);
     let label = TextStyle::new(13.0, Color::from_rgba8(230, 230, 230, 255));
-    column((0..cx.app().rows).map(|i| {
-        let key = Row(i);
-        let on = cx.state(
-            &key,
-            || false,
-            |on: &mut bool, key: &Row, event: RowEvent, _: &Bench| match event {
-                RowEvent::Toggle => {
-                    *on = !*on;
-                    Act::none()
-                }
-                RowEvent::Buy => Act::ask(Buy(key.0)),
+    let key = Row(i);
+    let on = cx.state(
+        &key,
+        || false,
+        |on: &mut bool, key: &Row, event: RowEvent, _: &Bench| match event {
+            RowEvent::Toggle => {
+                *on = !*on;
+                Act::none()
+            }
+            RowEvent::Buy => Act::ask(Buy(key.0)),
+        },
+    );
+    let check = match *on {
+        true => Check::On,
+        false => Check::Off,
+    };
+    row([
+        text(format!("Item {i}"), label),
+        checkbox(
+            cx,
+            Checkbox {
+                theme,
+                key: key.clone(),
+                label: "On",
+                check,
+                press: Press::Sends(on.send(RowEvent::Toggle)),
             },
-        );
-        let check = match *on {
-            true => Check::On,
-            false => Check::Off,
-        };
-        row([
-            text(format!("Item {i}"), label.clone()),
-            checkbox(
-                cx,
-                Checkbox {
-                    theme,
-                    key: key.clone(),
-                    label: "On",
-                    check,
-                    press: Press::Sends(on.send(RowEvent::Toggle)),
-                },
-            ),
-            ui.labeled_button(COIN, "Buy")
-                .on_press(on.send(RowEvent::Buy))
-                .into(),
-        ])
-    }))
+        ),
+        ui.labeled_button(COIN, "Buy")
+            .on_press(on.send(RowEvent::Buy))
+            .into(),
+    ])
 }
 
 struct Gpu {
@@ -236,10 +276,12 @@ struct Series {
     phases: Vec<Vec<Duration>>,
 }
 
-fn kit_series(gpu: Gpu, rows: usize) -> Series {
+fn kit_series(gpu: Gpu, rows: usize, listing: Listing) -> Series {
     let mut kit = Kit::new(gpu);
     let mut app = Bench {
         rows,
+        ids: (0..rows).collect(),
+        listing,
         buys: 0,
         now: Time::default(),
     };
@@ -328,25 +370,8 @@ fn main() {
     println!("|---:|---|---:|---:|---:|");
     for rows in ROW_COUNTS {
         let gpu_for_run = gpu_slot.take().unwrap_or_else(gpu);
-        let kit = kit_series(gpu_for_run, rows);
-        let names = ["view build", "layout", "paint", "GPU record"];
-        for (name, values) in names.iter().zip(&kit.phases) {
-            println!(
-                "{}",
-                row_line(rows, &format!("kit {name}"), kit.frames, values)
-            );
-        }
-        let kit_cpu: Vec<Duration> = sum_per_frame(&kit.phases[..3]);
-        println!(
-            "{}",
-            row_line(rows, "kit build + layout + paint", kit.frames, &kit_cpu)
-        );
-        let kit_total = sum_per_frame(&kit.phases);
-        println!(
-            "{}",
-            row_line(rows, "kit total (incl. GPU record)", kit.frames, &kit_total)
-        );
-
+        let kit = kit_series(gpu_for_run, rows, Listing::Plain);
+        print_kit(rows, "kit", &kit);
         let egui = egui_series(rows, kit.frames);
         println!(
             "{}",
@@ -357,5 +382,24 @@ fn main() {
                 &egui.phases[0]
             )
         );
+        let windowed = kit_series(gpu(), rows, Listing::Virtual);
+        print_kit(rows, "kit virtual", &windowed);
     }
+}
+
+/// The kit's phases, their CPU sum and their total, as table rows labelled with `name`.
+fn print_kit(rows: usize, name: &str, kit: &Series) {
+    let phases = ["view build", "layout", "paint", "GPU record"];
+    for (phase, values) in phases.iter().zip(&kit.phases) {
+        println!(
+            "{}",
+            row_line(rows, &format!("{name} {phase}"), kit.frames, values)
+        );
+    }
+    let cpu = sum_per_frame(&kit.phases[..3]);
+    let label = format!("{name} build + layout + paint");
+    println!("{}", row_line(rows, &label, kit.frames, &cpu));
+    let total = sum_per_frame(&kit.phases);
+    let label = format!("{name} total (incl. GPU record)");
+    println!("{}", row_line(rows, &label, kit.frames, &total));
 }

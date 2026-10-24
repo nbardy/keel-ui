@@ -36,6 +36,7 @@ mod text_field;
 pub mod toast;
 pub mod tooltip;
 mod ui;
+pub mod virtual_list;
 
 pub use bar::{Gauge, GaugeError};
 pub use button::{Button, ButtonSize};
@@ -68,3 +69,4 @@ pub use table::{Column, Table, table};
 pub use tabs::{Tabs, tabs};
 pub use toast::{Toast, ToastStack, toast};
 pub use tooltip::{Tooltip, tooltip};
+pub use virtual_list::{VirtualList, virtual_items};
