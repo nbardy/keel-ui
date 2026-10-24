@@ -54,7 +54,9 @@ pub(crate) fn kind<Msg>(node: &Node<Msg>) -> Kind<'_, Msg> {
             style: text_style,
         }),
         Node::TextField { view, field, .. } => Kind::Leaf(Leaf::Field { view, field }),
-        Node::Image { image, .. } => Kind::Leaf(Leaf::Image(image.size().logical())),
+        Node::Image {
+            image, image_style, ..
+        } => Kind::Leaf(Leaf::Image(image_style.crop.logical(image.size()))),
         Node::Shape { .. } => Kind::Leaf(Leaf::Empty),
         Node::Interactive { child, .. } | Node::Layer { child, .. } => Kind::Wrap(child),
         Node::Scroll { spec, child, .. } => Kind::Scroll {

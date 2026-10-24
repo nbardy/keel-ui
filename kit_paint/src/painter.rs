@@ -61,7 +61,9 @@ impl<Msg> Painter<'_, Msg> {
             }),
             LaidKind::Image { image, image_style } => self.out.push(Draw::Image {
                 image: *image,
-                rect: image_style.fit.rect(image.size(), rect),
+                rect: image_style
+                    .fit
+                    .rect(image_style.crop.logical(image.size()), rect),
                 style: *image_style,
             }),
             LaidKind::Shape { shape, paint } => self.shape(shape, paint, rect),

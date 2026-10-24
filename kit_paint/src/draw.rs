@@ -1,7 +1,7 @@
 use kit_core::kurbo::{Affine, Point, Rect, RoundedRectRadii, Stroke};
 use kit_core::peniko::Brush;
 use kit_core::{Border, Clip, Redraw, Shadow, Shape};
-use kit_view::{Image, ImageStyle, TextLayoutId};
+use kit_view::{Crop, Image, ImageRegion, ImageRegionError, ImageStyle, TextLayoutId};
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub enum RenderError {
@@ -10,12 +10,24 @@ pub enum RenderError {
     ImageNotRegistered(Image),
     ImageReleased(Image),
     ExternalTextureOnCpu(Image),
+    /// The style's region does not lie inside the image it draws (see `ImageRegion`).
+    ImageRegion {
+        image: Image,
+        error: ImageRegionError,
+    },
     /// The list has a `PopLayer` without a `PushLayer`, or a layer left open.
     UnbalancedLayers,
     /// A `Glyphs` names a layout the text system no longer holds (evicted by `end_frame` before drawing).
     TextNotLive(TextLayoutId),
     /// Device lost, surface outdated, etc.; the string is the backend's own description.
     Backend(String),
+}
+
+/// The texels a `Draw::Image` samples, checked against its image. Both backends call this before drawing, so a bad
+/// region is the same typed error on the CPU and the GPU.
+pub fn image_texels(image: Image, crop: Crop) -> Result<ImageRegion, RenderError> {
+    crop.texels(image.size())
+        .map_err(|error| RenderError::ImageRegion { image, error })
 }
 
 #[derive(Clone, PartialEq, Debug)]

@@ -65,6 +65,102 @@ pub enum ImageSizeError {
     Empty { width: u32, height: u32 },
 }
 
+/// A sub-rectangle of an image in texels, from its top-left corner (sprite sheets, atlas icons). Both sides are at
+/// least 1. Whether it lies inside the image is checked where the image is drawn, by [`Crop::texels`]: a region
+/// that reaches past the image is `RenderError::ImageRegion`, never clamped.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct ImageRegion {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+impl ImageRegion {
+    pub fn new(x: u32, y: u32, width: u32, height: u32) -> Result<Self, ImageRegionError> {
+        match width == 0 || height == 0 {
+            true => Err(ImageRegionError::Empty { width, height }),
+            false => Ok(Self {
+                x,
+                y,
+                width,
+                height,
+            }),
+        }
+    }
+    fn whole(image: ImageSize) -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            width: image.width,
+            height: image.height,
+        }
+    }
+    pub fn x(self) -> u32 {
+        self.x
+    }
+    pub fn y(self) -> u32 {
+        self.y
+    }
+    pub fn width(self) -> u32 {
+        self.width
+    }
+    pub fn height(self) -> u32 {
+        self.height
+    }
+    fn within(self, image: ImageSize) -> Result<Self, ImageRegionError> {
+        // u64: x + width must not wrap on a 32-bit sum before the comparison.
+        let fits = u64::from(self.x) + u64::from(self.width) <= u64::from(image.width)
+            && u64::from(self.y) + u64::from(self.height) <= u64::from(image.height);
+        match fits {
+            true => Ok(self),
+            false => Err(ImageRegionError::OutOfBounds {
+                region: self,
+                image,
+            }),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum ImageRegionError {
+    Empty {
+        width: u32,
+        height: u32,
+    },
+    /// The region's far edge lies past the image's edge (its size or offset is wrong for this image).
+    OutOfBounds {
+        region: ImageRegion,
+        image: ImageSize,
+    },
+}
+
+/// Which texels of an image a node draws: all of them (the default), or one [`ImageRegion`].
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum Crop {
+    Whole,
+    Region(ImageRegion),
+}
+
+impl Crop {
+    /// The texels this crop draws, checked against the image it samples. Each backend calls this when it draws, so
+    /// an out-of-bounds region is the same typed error on every target.
+    pub fn texels(self, image: ImageSize) -> Result<ImageRegion, ImageRegionError> {
+        match self {
+            Crop::Whole => Ok(ImageRegion::whole(image)),
+            Crop::Region(region) => region.within(image),
+        }
+    }
+    /// The painted size of the crop in logical px, one per texel. Layout measures this, so it does not check bounds:
+    /// an out-of-bounds region measures at its own size and then fails to draw.
+    pub fn logical(self, image: ImageSize) -> Size {
+        match self {
+            Crop::Whole => image.logical(),
+            Crop::Region(region) => Size::new(f64::from(region.width), f64::from(region.height)),
+        }
+    }
+}
+
 /// The typed handle a view node carries. Only a registration makes one drawable; a handle is never invented by a
 /// backend for a key it does not hold. Its size is fixed: new content of another size is a new registration.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -176,6 +272,8 @@ pub struct ImageStyle {
     pub filter: Filter,
     /// Corner radii of the drawn image rect (after fitting), logical px.
     pub radii: RoundedRectRadii,
+    /// The texels drawn: the whole image unless [`ImageStyle::region`] names a sub-rectangle.
+    pub crop: Crop,
 }
 
 impl ImageStyle {
@@ -185,6 +283,7 @@ impl ImageStyle {
             tint: Color::WHITE,
             filter: Filter::Linear,
             radii: RoundedRectRadii::from_single_radius(0.0),
+            crop: Crop::Whole,
         }
     }
     pub fn stretch() -> Self {
@@ -205,15 +304,23 @@ impl ImageStyle {
             ..self
         }
     }
+    /// Draw only `region` of the image, sized and filtered as if it were the whole image. Build regions once (an
+    /// atlas table at startup); an out-of-bounds region fails when the image is drawn.
+    pub fn region(self, region: ImageRegion) -> Self {
+        Self {
+            crop: Crop::Region(region),
+            ..self
+        }
+    }
 }
 
 impl Fit {
-    /// Destination inside the layout box. Empty boxes stay empty.
-    pub fn rect(self, size: ImageSize, bounds: Rect) -> Rect {
+    /// Destination inside the layout box, for a source of `source` logical px (the crop's size). Empty boxes stay
+    /// empty.
+    pub fn rect(self, source: Size, bounds: Rect) -> Rect {
         match self {
             Self::Stretch => bounds,
             Self::Contain => {
-                let source = size.logical();
                 let scale = (bounds.width().max(0.0) / source.width)
                     .min(bounds.height().max(0.0) / source.height);
                 let fitted = Size::new(source.width * scale, source.height * scale);

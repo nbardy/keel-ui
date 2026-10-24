@@ -356,6 +356,10 @@ Without an explicit size, a node measures one logical pixel per texel. `.tint(co
 and `.filter(Filter::Nearest)` configure its look (linear filtering is the default). Images respect clip
 layers and group opacity on both backends.
 
+`.region(ImageRegion::new(x, y, w, h)?)` draws one sub-rectangle of the image, in texels (an atlas icon or a sprite
+frame); without an explicit size the node measures the region, and a region that reaches past the image fails to
+draw with `RenderError::ImageRegion` rather than being clamped.
+
 For a minimap or portrait camera, use `gpu_ui.register_texture(&view, ImageSize::new(w, h)?)`.
 The game owns rendering into this view; the kit retains bindings until `release(handle)`. The view must be
 filterable, single-sample 2D with `TEXTURE_BINDING` usage; size names its selected mip's dimensions.

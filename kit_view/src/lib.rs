@@ -14,8 +14,8 @@ mod style;
 
 pub use builders::*;
 pub use image::{
-    Filter, Fit, Image, ImageKey, ImagePixels, ImageSize, ImageSizeError, ImageSource, ImageStyle,
-    PixelsError, image,
+    Crop, Filter, Fit, Image, ImageKey, ImagePixels, ImageRegion, ImageRegionError, ImageSize,
+    ImageSizeError, ImageSource, ImageStyle, PixelsError, image,
 };
 pub use kit_text::{
     Affinity, Align as TextAlign, Applied, Caret, Composition, CosmicText, Cursor, Edit,
