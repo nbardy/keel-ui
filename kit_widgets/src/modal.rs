@@ -1,10 +1,11 @@
 // Ported from egui 0.36.2 `crates/egui/src/containers/modal.rs` (MIT OR Apache-2.0, (c) Emil Ernerfeldt, Rerun Technologies).
 // Changes: kit state, intents and theme tokens replace egui's Ui/Response/Memory/epaint.
-//! Centered dialog; the caller controls its lifetime. The kit owns the scrim and focus trap.
+//! Centered dialog; the caller controls its lifetime. The kit owns the scrim, the focus trap and the return of focus to
+//! the opener when the dialog closes.
 use crate::common::{ink, surface};
 use kit_core::{Border, Shadow, Theme, WidgetId};
 use kit_view::{A11y, Anchor, AnchorH, AnchorV, Bindings, Layer, Node, PortalAnchor, Role};
-use kit_view::{SafeArea, Style, Toggle, Weight, dismissible, interactive, panel, row, text};
+use kit_view::{SafeArea, Style, Toggle, Weight, dismissible_from, interactive, panel, row, text};
 use std::hash::Hash;
 
 /// One enabled action; its intent decides whether the caller also closes the dialog.
@@ -22,6 +23,9 @@ pub struct Modal<'a, Msg, K> {
     pub actions: Vec<Action<'a, Msg>>,
     /// Sent by Close, Escape, or a press on the backdrop. Does not close locally.
     pub dismiss: Msg,
+    /// The control that opened this dialog. Focus returns to it when the dialog closes, as for menus: if it is gone,
+    /// disabled or behind the dialog, the first focusable control of the screen takes focus and the miss is counted.
+    pub opener: WidgetId,
 }
 
 /// On opening, the host must pass this id to `Router::request_focus` after layout.
@@ -76,7 +80,10 @@ pub fn modal<Msg: Clone, K: Hash>(p: Modal<'_, Msg, K>) -> Node<Msg> {
         offset: kit_core::kurbo::Vec2::ZERO,
         safe_area: SafeArea::Respect,
     };
-    dismissible(
+    // Same restoration as the popups (`dismissible_from`): a dialog that dropped its opener from `returns` would close
+    // with focus on nothing, and the next key would start from the top of the screen.
+    dismissible_from(
+        p.opener,
         Layer::Modal,
         PortalAnchor::Viewport(anchor),
         p.dismiss,

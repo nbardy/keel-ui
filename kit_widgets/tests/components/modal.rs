@@ -1,5 +1,6 @@
 //! Modal focus scope, caller-owned dismissal, and visible dialog states.
 use kit_core::{Key, NamedKey, Theme, WidgetId};
+use kit_input::Focus;
 use kit_state::{Act, Cx, Ident, Intent, Life};
 use kit_test::{Asked, Handle, TestApp};
 use kit_view::{A11y, Bindings, Node, Role, TextStyle, Toggle, column, interactive, nothing, text};
@@ -53,6 +54,8 @@ fn view(cx: &Cx<'_, TestApp>, theme: &Theme) -> Node<Intent<TestApp>> {
                 intent: Intent::Ask(Asked("review".into())),
             }],
             dismiss: open.send(()),
+            // The fixture starts open, so no button opened it; the control behind the scrim stands in as the opener.
+            opener: WidgetId::of(&Id("behind")),
         }),
         false => nothing(),
     };
@@ -160,4 +163,102 @@ fn host_initial_focus_on_primary_action_activates_it_without_tab() {
         dispatch(&mut app, &mut store, intent);
     }
     assert_eq!(app.asked, [Asked("sail".into())]);
+}
+
+/// A screen with an "Open" button and an "Other" button. The dialog opens from "Open"; its "Remove opener" button takes
+/// "Open" off the screen while the dialog stays up, which is how the opener-gone fallback is reached.
+fn opened_view(cx: &Cx<'_, TestApp>, theme: &Theme) -> Node<Intent<TestApp>> {
+    let flag = |key: &'static str| {
+        cx.state(
+            &Id(key),
+            || false,
+            |s: &mut bool, _: &Id, e: bool, _: &TestApp| {
+                *s = e;
+                Act::none()
+            },
+        )
+    };
+    let (open, gone) = (flag("open"), flag("gone"));
+    let words = |s| {
+        text(
+            s,
+            TextStyle::new(theme.type_scale.body as f32, theme.colors.text),
+        )
+    };
+    let button = |key: &'static str, label: &'static str, on: Intent<TestApp>| {
+        interactive(
+            WidgetId::of(&Id(key)),
+            Bindings::activate(on),
+            A11y::Labeled {
+                role: Role::Button,
+                label: label.into(),
+                toggle: Toggle::NotToggle,
+            },
+            words(label).pad(theme.spacing.md),
+        )
+    };
+    let opener = match *gone {
+        true => nothing(),
+        false => button("open", "Open", open.send(true)),
+    };
+    let other = button("other", "Other", Intent::Ask(Asked("other".into())));
+    let dialog = match *open {
+        true => modal(Modal {
+            theme,
+            key: Id("dialog"),
+            title: "Remove the sword?",
+            body: button("remove", "Remove opener", gone.send(true)),
+            primary: Action {
+                label: "Done",
+                intent: open.send(false),
+            },
+            actions: vec![],
+            dismiss: open.send(false),
+            opener: WidgetId::of(&Id("open")),
+        }),
+        false => nothing(),
+    };
+    column([opener, other, dialog])
+}
+
+fn opened() -> Handle<TestApp, impl Fn(&Cx<'_, TestApp>, &Theme) -> Node<Intent<TestApp>>> {
+    Handle::new(TestApp::new(), (420.0, 240.0), opened_view)
+}
+
+/// Escape closes a dialog opened from a button, and focus goes back to that button, not to nothing.
+#[test]
+fn escape_returns_focus_to_the_opener() {
+    let mut h = opened();
+    h.click(Role::Button, "Open");
+    assert!(h.shows(Role::Button, "Done"));
+    h.press_key(Key::Named(NamedKey::Escape));
+    assert!(!h.shows(Role::Button, "Done"));
+    assert_eq!(h.focus(), Focus::On(WidgetId::of(&Id("open"))));
+    assert_eq!(h.restore_fallbacks(), 0);
+}
+
+/// The Close button takes the same path as Escape: the dismissal leaves focus on the opener.
+#[test]
+fn close_button_returns_focus_to_the_opener() {
+    let mut h = opened();
+    h.click(Role::Button, "Open");
+    h.click(Role::Button, "Close");
+    assert!(!h.shows(Role::Button, "Done"));
+    assert_eq!(h.focus(), Focus::On(WidgetId::of(&Id("open"))));
+    assert_eq!(h.restore_fallbacks(), 0);
+}
+
+/// When the opener leaves the screen while the dialog is open, focus goes to the first focusable control on the screen
+/// ("Other") and the miss is counted.
+#[test]
+fn opener_removed_while_the_dialog_is_open_falls_back_to_the_first_control() {
+    let mut h = opened();
+    h.click(Role::Button, "Open");
+    h.click(Role::Button, "Remove opener");
+    assert!(!h.shows(Role::Button, "Open"), "the opener is gone");
+    assert!(h.shows(Role::Button, "Done"), "the dialog is still open");
+    h.press_key(Key::Named(NamedKey::Escape));
+    assert!(!h.shows(Role::Button, "Done"));
+    assert_eq!(h.focus(), Focus::On(WidgetId::of(&Id("other"))));
+    assert_eq!(h.restore_fallbacks(), 1);
 }

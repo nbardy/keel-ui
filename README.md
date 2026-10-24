@@ -221,7 +221,7 @@ maturity matter most; choose the kit when you prefer a component tree with data-
   opener when they close. If the opener is gone, disabled or behind a modal, focus goes to the first focusable
   control of the current scope and `UiMemory::restore_fallbacks()` counts it. Focus is only restored when it is
   adrift (unfocused, or on something that left with the popup), so a press that lands on another control keeps it.
-  The menu, combo box and colour picker popups do this; modals do not yet.
+  The menu, combo box, colour picker and modal dialogs do this; a modal names its opener in `Modal::opener`.
 - **A native starter, no browser starter.** `kit_winit` (winit events, IME, arboard clipboard) and its `starter`
   example run natively. The browser adapter (canvas events, the hidden IME/clipboard textarea) still lives in the game
   that uses the kit; a standalone browser example is planned.
