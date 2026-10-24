@@ -4,7 +4,7 @@
 
 A declarative, functional-reactive UI library for games and GPU apps: components are plain functions, local state
 works in loops and branches, events are values, and the UI records into *your* wgpu command encoder, in the same frame
-as your scene. No web runtime, no second renderer, no compositing pass. Layout is [taffy] (flexbox and grid) and text
+as your scene. No web runtime, no second renderer, no separate UI compositor. Layout is [taffy] (flexbox and grid) and text
 is [cosmic-text], both used through their own types. Runs natively (Metal, Vulkan, DX12) and in the browser (wasm +
 WebGPU) from the same code.
 
@@ -66,11 +66,13 @@ list with real clicks, and checks were confirmed to fail when state is keyed by 
 ## Why use it
 
 - **Your frame, your encoder.** The UI is the last thing you record into the game's own `wgpu::CommandEncoder`
-  (`LoadOp::Load`, over your scene). There is no UI-owned window, renderer, offscreen layer or second hit-tester.
+  (`LoadOp::Load`, over your scene). There is no UI-owned window, renderer, whole-UI
+  compositing layer or second hit-tester (only translucent groups use an offscreen pass, inside your frame).
 - **World-anchored UI built in.** `world(anchor, node)` places UI at a projected 3D point: nameplates, health bars,
   markers.
 - **Functional reactive, no dependency lists.** Views are functions from app data to a value tree, re-run every frame.
-  The game's 58-node HUD rebuilds and lays out in about 23 µs.
+  The game's 58-node HUD rebuilds and lays out in about 23 µs (layout only; whole-frame numbers for large screens
+  are not measured yet, see limits).
 - **Local state without hook rules.** `cx.state(&key, init, reducer)` is keyed by data, so it works in loops, branches
   and reordered lists. The key's `life` (a function of your app data) decides when state is collected. An event that
   arrives for a dead key is refused and counted, never applied to the wrong row.
@@ -80,14 +82,19 @@ list with real clicks, and checks were confirmed to fail when state is keyed by 
   input can be replayed.
 - **The standard libraries, unwrapped.** A node's style *is* a `taffy::Style`, and text *is* `cosmic-text`. There's
   no layout or text abstraction of the kit's own to learn.
-- **No web runtime.** Pure Rust down to wgpu. The browser build adds a small host (`hosts/host_web`), used only on wasm.
+- **No web runtime on native.** Native builds are pure Rust down to wgpu, and CI fails if `wasm-bindgen`, `js-sys` or
+  `web-sys` enters any kit crate's native dependency tree. In the browser the kit draws through WebGPU into a
+  `<canvas>`: no DOM element draws any UI. The browser host only borrows what it must: the canvas, input events, and a
+  hidden textarea for IME and the clipboard.
 - **Small, copyable components.** About 25 components (button, checkbox, switch, slider, text field, combo box,
   listbox, menu, modal, tabs, table, toast, tooltip, colour picker…), most 50–190 lines. The library is the
   infrastructure; components are meant to be copied into your crate and restyled.
 
-**Pick it** for a Rust game or GPU app with your own wgpu loop that wants declarative, stateful UI inside its frame,
-especially a multiplayer one where the server owns the truth. **Pick something else** if you use Bevy (Bevy UI or
-bevy_egui), need a big ready-made widget set for tools (egui), or build a document-style web app (the DOM).
+**Pick it** for a Rust game or GPU app with your own wgpu loop and a vector-and-text UI (HUD, menus, chat, shops, unit
+panels) that you want to write as declarative components with local state, especially a multiplayer one where the
+server owns the truth. **Wait** if your UI leans on image art (item icons, portraits, textured skins: images are not
+supported yet) or is controller-first (no spatial navigation yet). **Pick something else** for a Bevy game (Bevy UI),
+or for debug panels, inspectors and tools (egui).
 
 ## Status and limits
 
@@ -97,28 +104,77 @@ bevy_egui), need a big ready-made widget set for tools (egui), or build a docume
   bundled Inter font keep their own licences ([THIRD_PARTY.md](THIRD_PARTY.md)).
 - **No screen-reader support.** There is a semantics mirror, but it exists for tests and keyboard activation;
   accessibility is out of scope by owner decision.
+- **No images or textures yet.** Shapes, vector icons and text only: an image or gradient brush is a typed
+  `UnsupportedBrush` error, and there is no way to register a game texture (a portrait, a minimap render target). This
+  is the next feature.
+- **No gamepad input or spatial navigation.** Focus moves by Tab order (Up/Down walk it too); a controller-driven
+  inventory grid needs the game to map buttons to keys and steer focus itself.
+- **No runnable starter in this repo.** The winit and browser adapters (event conversion, IME textarea, clipboard)
+  live in the game that uses the kit; a standalone native/browser example is planned.
+- **Performance is measured for a small HUD only.** The tree is rebuilt every frame, vertex buffers are created per
+  render, and each translucent group with two or more items is a full-target offscreen pass. Measure your largest screen.
 - **Fewer widgets than egui,** and no built-in docking, plotting or rich-text editing.
 - **Server-authority helpers are designed, not built.** That means tracking a sent command to its confirmed, refused
   or unknown outcome (`cx.track` / `cx.read`). Today you model pending requests in your own app data.
 - **Requirements:** wgpu 30, Rust 1.97 (edition 2024). WebGPU only on the web; there is no WebGL2 path.
 
-## Plug it into your frame
+## Drawing into your frame
 
-The whole per-frame loop. It is the same loop `kit_widgets/tests/components/support.rs` and the game's hosts run:
+The kit never owns a window, a surface or a submit. You hand it your encoder and a texture view; it adds one render
+pass that draws over the pixels already there (`LoadOp::Load`):
+
+```rust
+// once: one renderer per colour format you draw to
+let mut kit_gpu = WgpuUi::new(device.clone(), queue.clone(), surface_format);
+
+// every frame
+let mut encoder = device.create_command_encoder(&Default::default());
+draw_my_scene(&mut encoder, &frame_view);              // your passes: 3D, sprites, post-processing, anything
+
+let mut ui = kit_gpu.begin_frame(&mut text, viewport); // logical size + device scale, shared by layout and drawing
+let laid = layout.layout(root, ui.viewport(), ui.text(), &camera)?;
+let draws = paint(&laid, &memory, &theme, now);        // a plain-data DrawList
+ui.record(&draws, FrameTarget {
+    encoder: &mut encoder,                             // YOUR encoder: same command buffer as the scene
+    view: &frame_view,                                 // any texture view of `surface_format`
+    format: surface_format,
+    size: (width, height),                             // physical pixels
+})?;
+
+queue.submit([encoder.finish()]);
+drop(ui);                                              // frame over: glyph-atlas fence, text-cache eviction
+surface_texture.present();
+```
+
+What that leaves up to you:
+
+- **When in the frame.** Record the UI after your scene, before or after your post-processing (so it is or is not
+  tonemapped and bloomed), or before a final blit.
+- **Onto what.** Any texture view in the renderer's format: the swapchain, or an offscreen texture you later put on a
+  3D screen, use as a minimap, composite, or read back in a test. The game's native GPU test records the HUD into an
+  offscreen texture and reads the pixels back.
+- **How many.** Several UIs per frame, each its own `begin_frame`. The game draws two canvases this way: the sea with its
+  HUD, and the station console.
+- **Which GPU API.** Whatever wgpu backend your app enables: Metal, Vulkan, DX12, or WebGPU in the browser. `kit_wgpu`
+  itself only asks wgpu for WGSL.
+- **Whether it is wgpu at all.** The `DrawList` is plain data (fills, strokes, rounded rects, glyph runs, clip layers).
+  `kit_raster` draws the same list on the CPU with tiny-skia for golden tests; another backend only has to consume it.
+
+## The rest of the loop: state and input
+
+The same loop `kit_widgets/tests/components/support.rs` and the game's hosts run:
 
 ```rust
 // once
 let mut store = Store::<App>::new();          // every component's local state, keyed by data
 let mut memory = UiMemory::new(viewport);     // hover, focus, scroll, gestures
 let (mut layout, router) = (TaffyLayout::new(), Router::default());
-let mut text = CosmicText::new(font_source, TextConfig::default())?;
-let mut gpu_ui = WgpuUi::new(device.clone(), queue.clone(), surface_format);
 
-// every frame
+// every frame, before drawing
 store.collect(&app);                          // server data changed: end the state of keys whose life is Over
 wake_due(&mut app, &mut store);               // timers that reducers scheduled
 let root = view(&Cx::routed(&app, &store, &memory), &theme);
-let laid = layout.layout(root, viewport, &mut text, &camera)?; // `camera` projects world anchors; or `&NoWorld`
+// ... lay out as above, then route this frame's input against what the player saw:
 for event in window_events {                  // your winit/browser events converted to `InputEvent`
     match router.route(&laid, &mut memory, event.clone(), app.now()) {
         Routing::Handled(intents) => intents.into_iter().for_each(|i| dispatch(&mut app, &mut store, i)),
@@ -128,11 +184,6 @@ for event in window_events {                  // your winit/browser events conve
 }
 router.frame(&laid, &mut memory, app.now());  // scroll momentum, focus requests
 memory.end_frame();
-let draws = paint(&laid, &memory, &theme, app.now());
-// ... record your scene into `encoder`, then:
-gpu_ui.render(&draws, &mut text, WgpuTarget { encoder: &mut encoder, surface: &ui_surface })?;
-queue.submit([encoder.finish()]);
-gpu_ui.frame_submitted();
 ```
 
 Your app implements `Host` (a clock, a motion preference, and where `Ask`s go). The clock is an input, never read from
@@ -143,9 +194,9 @@ the OS, so tests and replays are deterministic.
 | | Bevy UI | egui | Dioxus / Freya | Xilem | **Keel kit** |
 |---|---|---|---|---|---|
 | UI is | ECS entities + systems | immediate calls, no tree | functions → tree | views as values | **functions → value tree** |
-| Local state | components on entities | memory keyed by label/position `Id` | hooks, call-order rules | app data + lenses | **`cx.state(&key, ..)` keyed by data; fine in loops and branches** |
+| Local state | components on entities | `Id`s you can derive from data, plus memory | hooks, call-order rules | app data + lenses | **`cx.state(&key, init, reducer)` keyed by data; fine in loops and branches** |
 | Dependencies | queries | n/a | dependency lists | n/a | **none: views re-run per frame** |
-| Cleanup | despawn by hand | GC of unseen ids | effect teardown | n/a | **the key's `life` collects state; late input is refused** |
+| Cleanup | despawn by hand | state of ids not seen this frame is dropped | effect teardown | n/a | **your rule: the key's `life` (a function of app data) collects state; late input is refused** |
 | Events | observers | `if response.clicked()` | closures | callbacks | **data (`Intent`): testable, replayable** |
 | Draws in your frame | no (Bevy owns it) | yes (egui-wgpu) | no (own renderer) | no (own window) | **yes (your encoder, world-anchored UI)** |
 
@@ -157,14 +208,16 @@ between two hit-testers.
 | | Dioxus desktop | Dioxus native / Blitz | Freya | **Keel kit** |
 |---|---|---|---|---|
 | Renderer | system WebView (a web runtime) | its own HTML/CSS engine (Stylo + vello) | Skia (C++) | **the game's wgpu encoder** |
-| Inside a game frame | no | offscreen layer + composite; vello's wgpu must match yours | GL/Metal/Vulkan texture interop with wgpu, or CPU readback | **directly: no second renderer, no composite, no input arbitration** |
+| Inside a game frame | no | offscreen layer + composite; vello's wgpu must match yours | GL/Metal/Vulkan texture interop with wgpu, or CPU readback | **directly: no second renderer, no whole-UI composite, no input arbitration** |
 | World-anchored UI | n/a | push projected positions into its state every frame | same | **native (`world(anchor, ..)`)** |
 | Extra weight | a browser engine | a CSS engine | a C++ graphics library | **cosmic-text, taffy, lyon, etagere** |
 
-**Versus egui**, the closest fit: egui also draws into your wgpu pass and is far more mature. Choose the kit when you
-want the UI as a value tree (testable by role and label, not pixels), state that follows data identity through
-reordering and is collected by your app's own rules, and input routing that tells the game exactly what the UI did
-not take (`Handled` / `Captured` / `Passed`).
+**Versus egui**, the closest fit: egui is far more mature and already does several things this README talks about.
+`egui-wgpu` renders into your existing pass, egui `Id`s can be derived from item ids, and `egui_kittest` tests by
+semantics and snapshots. The kit's case is the combination, not any single feature: a declarative component tree laid
+out by taffy, local reducers whose events are values, state lifetimes your app defines (and late input refused), and
+input routing that tells the game what the UI did not take (`Handled` / `Captured` / `Passed`). Choose it if you
+prefer that way of writing a game's UI; choose egui for tools, or when you need its widget breadth and images today.
 
 ## How it works
 
