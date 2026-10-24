@@ -28,13 +28,14 @@ pub use laid::{
     WorldProjector,
 };
 pub use node::{
-    A11y, Availability, Bindings, ClipSpec, DragPayload, DragSpec, DropSpec, Dropped, FieldStyle,
-    FocusClaim, HoverSpec, KeyAnswer, KeyPress, KeySpec, Node, Paint, PointerAt, PointerPhase,
-    PointerSpec, PressSpec, RangeValue, Role, Shortcut, Toggle, Tooltip, Travel, WorldAnchor,
-    WorldPoint,
+    A11y, Availability, Bindings, ClipSpec, ContextSpec, DragPayload, DragSpec, DropSpec, Dropped,
+    FieldStyle, FocusClaim, HoverSpec, KeyAnswer, KeyPress, KeySpec, Node, Paint, PointerAt,
+    PointerPhase, PointerSpec, PressSpec, RangeValue, Role, Shortcut, Toggle, Tooltip, Travel,
+    WorldAnchor, WorldPoint,
 };
 pub use portal::{
-    Dismissal, Layer, ModalFloor, Parent, PortalAnchor, PortalRef, Side, Stacking, place_beside,
+    Dismissal, FocusReturn, Layer, ModalFloor, Parent, PortalAnchor, PortalRef, Side, Stacking,
+    place_beside,
 };
 pub use screen::Screen;
 pub use scroll::{Bars, Reveal, RevealAlign, RevealTarget, ScrollSpec, Stick};

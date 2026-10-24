@@ -87,6 +87,7 @@ fn a_field_component_types_selects_and_undoes_through_cx_state() {
             phase,
             at: Point::new(5.0, 5.0),
             pressure: 1.0,
+            button: kit_input::PointerButton::Primary,
         })
     };
     frame(press(Phase::Down), &mut app, &mut store);

@@ -92,6 +92,7 @@ fn pointer(x: f64, y: f64, phase: Phase) -> InputEvent {
         phase,
         at: Point::new(x, y),
         pressure: 0.0,
+        button: kit_input::PointerButton::Primary,
     })
 }
 fn handle(top: f64) -> Handle<App, impl Fn(&Cx<'_, App>, &Theme) -> Node<Intent<App>>> {

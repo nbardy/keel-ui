@@ -35,6 +35,7 @@ fn touch(phase: Phase, y: f64) -> InputEvent {
         phase,
         at: Point::new(50.0, y),
         pressure: 1.0,
+        button: kit_input::PointerButton::Primary,
     })
 }
 fn wheel(y: f64, dy: f64) -> InputEvent {
@@ -267,6 +268,7 @@ fn dragging_the_thumb_maps_the_bar_onto_the_whole_content() {
             phase,
             at: Point::new(96.0, y),
             pressure: 1.0,
+            button: kit_input::PointerButton::Primary,
         })
     };
     // The thumb is 20 px of the 100 px bar (viewport/content), at the top; grab it 5 px down.

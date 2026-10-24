@@ -6,8 +6,8 @@
 use kit_core::Viewport;
 use kit_core::kurbo::{Point, Size, Vec2};
 use kit_input::{
-    DeltaUnit, ImeEvent, InputEvent, Key, KeyState, Modifiers, NamedKey, Phase, PointerEvent,
-    PointerId, PointerKind,
+    DeltaUnit, ImeEvent, InputEvent, Key, KeyState, Modifiers, NamedKey, Phase, PointerButton,
+    PointerEvent, PointerId, PointerKind,
 };
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
@@ -68,25 +68,29 @@ impl Input {
             ),
             WindowEvent::Ime(ime) => ime_event(ime).map(InputEvent::Ime).into_iter().collect(),
             WindowEvent::CursorMoved { position, .. } => vec![self.cursor_moved(*position)],
-            WindowEvent::CursorLeft { .. } => vec![self.mouse(Phase::Leave)],
+            WindowEvent::CursorLeft { .. } => {
+                vec![self.mouse(Phase::Leave, PointerButton::Primary)]
+            }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
                 ..
-            } => vec![self.mouse(match state {
-                ElementState::Pressed => Phase::Down,
-                ElementState::Released => Phase::Up,
-            })],
+            } => vec![self.button(*state, PointerButton::Primary)],
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Right,
+                ..
+            } => vec![self.button(*state, PointerButton::Secondary)],
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Middle,
+                ..
+            } => vec![self.button(*state, PointerButton::Middle)],
             WindowEvent::MouseWheel { delta, .. } => vec![wheel(*delta, self.cursor, self.scale)],
             WindowEvent::Touch(t) => vec![touch(t.id, t.phase, t.location, t.force, self.scale)],
-            // The kit's pointer has no button field: only the primary button presses. Copy this adapter to map more.
+            // The kit names three buttons (primary, secondary, middle); the side buttons have no meaning to it.
             WindowEvent::MouseInput {
-                button:
-                    MouseButton::Right
-                    | MouseButton::Middle
-                    | MouseButton::Back
-                    | MouseButton::Forward
-                    | MouseButton::Other(_),
+                button: MouseButton::Back | MouseButton::Forward | MouseButton::Other(_),
                 ..
             }
             | WindowEvent::ActivationTokenDone { .. }
@@ -124,15 +128,25 @@ impl Input {
     }
     fn cursor_moved(&mut self, position: PhysicalPosition<f64>) -> InputEvent {
         self.cursor = logical(position, self.scale);
-        self.mouse(Phase::Move)
+        self.mouse(Phase::Move, PointerButton::Primary)
     }
-    fn mouse(&self, phase: Phase) -> InputEvent {
+    fn button(&self, state: ElementState, button: PointerButton) -> InputEvent {
+        self.mouse(
+            match state {
+                ElementState::Pressed => Phase::Down,
+                ElementState::Released => Phase::Up,
+            },
+            button,
+        )
+    }
+    fn mouse(&self, phase: Phase, button: PointerButton) -> InputEvent {
         InputEvent::Pointer(PointerEvent {
             id: MOUSE,
             kind: PointerKind::Mouse,
             phase,
             at: self.cursor,
             pressure: 1.0,
+            button,
         })
     }
 }
@@ -273,6 +287,7 @@ pub fn touch(
         },
         at: logical(location, scale),
         pressure: force.map_or(1.0, |force| force.normalized() as f32),
+        button: PointerButton::Primary,
     })
 }
 
@@ -297,7 +312,7 @@ mod tests {
         let moved = input.cursor_moved(PhysicalPosition::new(300.0, 120.0));
         assert_eq!(pointer(&moved), (Phase::Move, Point::new(150.0, 60.0)));
         assert_eq!(
-            pointer(&input.mouse(Phase::Down)),
+            pointer(&input.mouse(Phase::Down, PointerButton::Primary)),
             (Phase::Down, Point::new(150.0, 60.0))
         );
         let finger = touch(
@@ -318,6 +333,41 @@ mod tests {
         );
         let moved = input.cursor_moved(PhysicalPosition::new(300.0, 120.0));
         assert_eq!(pointer(&moved).1, Point::new(300.0, 120.0));
+    }
+
+    /// Left, right and middle reach the router as primary, secondary and middle. A swapped mapping makes a right-click
+    /// fire a control's primary action (or a left-click open its context menu); the side buttons are dropped, not
+    /// guessed at.
+    #[test]
+    fn mouse_buttons_map_to_the_kit_buttons() {
+        let mut input = Input::new(PhysicalSize::new(800, 600), 1.0);
+        let press = |input: &mut Input, button, state| {
+            let event = WindowEvent::MouseInput {
+                device_id: winit::event::DeviceId::dummy(),
+                state,
+                button,
+            };
+            input.convert(&event)
+        };
+        let button_of = |events: Vec<InputEvent>| match events.as_slice() {
+            [InputEvent::Pointer(p)] => (p.phase, p.button),
+            other => panic!("expected one pointer event, got {other:?}"),
+        };
+        for (winit_button, button) in [
+            (MouseButton::Left, PointerButton::Primary),
+            (MouseButton::Right, PointerButton::Secondary),
+            (MouseButton::Middle, PointerButton::Middle),
+        ] {
+            assert_eq!(
+                button_of(press(&mut input, winit_button, ElementState::Pressed)),
+                (Phase::Down, button)
+            );
+            assert_eq!(
+                button_of(press(&mut input, winit_button, ElementState::Released)),
+                (Phase::Up, button)
+            );
+        }
+        assert!(press(&mut input, MouseButton::Back, ElementState::Pressed).is_empty());
     }
 
     /// Lines stay lines; pixels are physical and halve at scale 2; both flip sign (winit: positive = wheel up,

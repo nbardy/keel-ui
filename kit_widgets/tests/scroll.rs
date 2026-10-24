@@ -121,6 +121,7 @@ fn mouse(phase: Phase, y: f64) -> InputEvent {
         phase,
         at: Point::new(50.0, y),
         pressure: 1.0,
+        button: kit_input::PointerButton::Primary,
     })
 }
 

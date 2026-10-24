@@ -40,6 +40,7 @@ fn mouse(phase: Phase, x: f64, y: f64) -> InputEvent {
         phase,
         at: Point::new(x, y),
         pressure: 1.0,
+        button: kit_input::PointerButton::Primary,
     })
 }
 fn route(laid: &LaidOut<PointerAt>, mem: &mut UiMemory, e: InputEvent) -> Routing<PointerAt> {

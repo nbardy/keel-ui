@@ -4,7 +4,7 @@ use crate::hit::{HitPath, Region, bindings_of, hit_test};
 use crate::layers::{self, Press};
 use crate::{
     AnimKey, DeltaUnit, Focus, Gesture, Hover, InputEvent, Key, KeyState, Modifiers, NamedKey,
-    Phase, PointerEvent, PointerId, PointerState, UiMemory,
+    Phase, PointerButton, PointerEvent, PointerId, PointerState, UiMemory,
 };
 use kit_core::kurbo::{Point, Vec2};
 use kit_core::{Time, WidgetId};
@@ -112,6 +112,7 @@ impl Router {
     ) -> Routing<Msg> {
         let mut out = Vec::new();
         self.prune_stale(laid, memory, &mut out);
+        focus::restore(laid, memory, now);
         focus::prune(laid, memory);
         // keys: fields hear focus moves made outside routing (claims, host requests) before this event's edits.
         focus::tell(laid, memory, &mut out);
@@ -123,6 +124,7 @@ impl Router {
             InputEvent::Key { key, state, mods } => {
                 self.key(laid, memory, KeyEvent { key, state, mods }, now, &mut out)
             }
+            InputEvent::Nav(action) => self.nav(laid, memory, action, now, &mut out),
             InputEvent::Modifiers(mods) => {
                 memory.mods = mods;
                 Claim::Free
@@ -208,23 +210,42 @@ impl Router {
                     end_gesture(memory, ev.id);
                     return Claim::Taken;
                 }
-                self.down(laid, memory, ev, now);
-                // keys: a field the press focused hears Focus before the press's caret placement.
-                focus::tell(laid, memory, out);
-                // track: a press that began a track reports itself (nothing otherwise).
-                crate::track::report(laid, memory, ev.id, kit_view::PointerPhase::Press, out);
-                self.field_pressed(laid, memory, ev, now, out);
-                let gesture_begun = !matches!(memory.pointers[&ev.id].gesture, Gesture::Idle);
-                Claim::when(gesture_begun || matches!(memory.focus, Focus::On(_)))
+                match ev.button {
+                    PointerButton::Primary => {
+                        self.down(laid, memory, ev, now);
+                        // keys: a field the press focused hears Focus before the press's caret placement.
+                        focus::tell(laid, memory, out);
+                        // track: a press that began a track reports itself (nothing otherwise).
+                        crate::track::report(
+                            laid,
+                            memory,
+                            ev.id,
+                            kit_view::PointerPhase::Press,
+                            out,
+                        );
+                        self.field_pressed(laid, memory, ev, now, out);
+                        let gesture_begun =
+                            !matches!(memory.pointers[&ev.id].gesture, Gesture::Idle);
+                        Claim::when(gesture_begun || matches!(memory.focus, Focus::On(_)))
+                    }
+                    PointerButton::Secondary => self.context_down(laid, memory, ev, now),
+                    // The middle button has no gesture in the UI (the world may use it); it still dismissed
+                    // popups above, like any press outside.
+                    PointerButton::Middle => Claim::Free,
+                }
             }
             Phase::Move => {
                 self.moved(laid, memory, ev, now, out);
                 Claim::when(held)
             }
-            Phase::Up => {
-                self.up(laid, memory, ev, now, out);
-                Claim::when(held)
-            }
+            Phase::Up => match ev.button {
+                PointerButton::Primary => {
+                    self.up(laid, memory, ev, now, out);
+                    Claim::when(held)
+                }
+                PointerButton::Secondary => self.context_up(laid, memory, ev, out),
+                PointerButton::Middle => Claim::Free,
+            },
             Phase::Cancel => {
                 crate::track::abandon(laid, memory, ev.id, out);
                 Claim::when(held)
@@ -290,6 +311,69 @@ impl Router {
         };
         if let Some(state) = memory.pointers.get_mut(&ev.id) {
             state.gesture = gesture;
+        }
+    }
+
+    /// Secondary press: begins a context gesture on the innermost control that binds one, and focuses it so the menu
+    /// it opens has an opener to give focus back to. A pointer already holding a gesture ignores it (one gesture per
+    /// pointer). Nothing else happens: no press animation, no drag, and `activate` is never involved.
+    fn context_down<Msg>(
+        &self,
+        laid: &LaidOut<Msg>,
+        memory: &mut UiMemory,
+        ev: PointerEvent,
+        now: Time,
+    ) -> Claim {
+        if !matches!(memory.pointers[&ev.id].gesture, Gesture::Idle) {
+            return Claim::Taken;
+        }
+        let path = hit_test(laid, memory, ev.at);
+        match first_context(&path) {
+            Some(source) => {
+                focus::focus_on(memory, source, now);
+                set_gesture(
+                    memory,
+                    ev.id,
+                    Gesture::Context {
+                        source,
+                        epoch: laid.epoch,
+                    },
+                );
+                Claim::Taken
+            }
+            None => Claim::Free,
+        }
+    }
+
+    /// Secondary release: fires the control's context message when it lets go over the control it pressed.
+    fn context_up<Msg>(
+        &self,
+        laid: &LaidOut<Msg>,
+        memory: &mut UiMemory,
+        ev: PointerEvent,
+        out: &mut Vec<Msg>,
+    ) -> Claim {
+        match memory.pointers[&ev.id].gesture {
+            Gesture::Context { source, .. } => {
+                end_gesture(memory, ev.id);
+                let path = hit_test(laid, memory, ev.at);
+                if first_context(&path) == Some(source)
+                    && let Some(spec) = laid
+                        .find(source)
+                        .and_then(bindings_of)
+                        .and_then(|on| on.context.as_ref())
+                {
+                    out.push((spec.on)(ev.at));
+                }
+                Claim::Taken
+            }
+            Gesture::Idle
+            | Gesture::Press { .. }
+            | Gesture::Backdrop { .. }
+            | Gesture::Drag { .. }
+            | Gesture::Pan { .. }
+            | Gesture::Track { .. }
+            | Gesture::Select { .. } => Claim::Free,
         }
     }
 
@@ -364,6 +448,8 @@ impl Router {
                 }
             }
             Gesture::Pan { .. } => self.pan_step(laid, memory, ev, now),
+            // The release decides (over the same control); moving the pointer changes nothing.
+            Gesture::Context { .. } => {}
             Gesture::Select {
                 field, anchor, by, ..
             } => {
@@ -452,6 +538,7 @@ impl Router {
             Gesture::Idle
             | Gesture::Backdrop { .. }
             | Gesture::Select { .. }
+            | Gesture::Context { .. }
             | Gesture::Track { .. } => {}
         }
         update_hover(laid, memory, ev.id, now, out);
@@ -594,6 +681,14 @@ fn first_capturing<Msg>(path: &HitPath<'_, Msg>) -> Option<WidgetId> {
     })
 }
 
+/// The innermost control under the point that answers a context click.
+fn first_context<Msg>(path: &HitPath<'_, Msg>) -> Option<WidgetId> {
+    path.regions.iter().find_map(|r| match r {
+        Region::Bound { id, on, .. } if on.context.is_some() => Some(*id),
+        Region::Bound { .. } | Region::Field { .. } => None,
+    })
+}
+
 fn set_gesture(memory: &mut UiMemory, id: PointerId, gesture: Gesture) {
     if let Some(state) = memory.pointers.get_mut(&id) {
         state.gesture = gesture;
@@ -608,9 +703,11 @@ pub(crate) fn end_gesture(memory: &mut UiMemory, id: PointerId) {
         Gesture::Press { source, .. }
         | Gesture::Drag { source, .. }
         | Gesture::Track { source, .. } => Some(source),
-        Gesture::Idle | Gesture::Backdrop { .. } | Gesture::Pan { .. } | Gesture::Select { .. } => {
-            None
-        }
+        Gesture::Idle
+        | Gesture::Backdrop { .. }
+        | Gesture::Pan { .. }
+        | Gesture::Context { .. }
+        | Gesture::Select { .. } => None,
     };
     state.gesture = Gesture::Idle;
     if let Some(source) = source {

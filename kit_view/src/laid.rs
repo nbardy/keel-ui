@@ -1,8 +1,8 @@
 use crate::scroll::ScrollSpec;
 use crate::{
     A11y, Availability, Bindings, ClipSpec, CosmicText, Dismissal, Edit, FieldGeometry, FieldStyle,
-    FieldView, FocusClaim, Layer, MaxWidth, Node, Paint, PortalAnchor, Shortcut, TextLayout,
-    TextWrap, Tooltip, WorldAnchor, WorldPoint,
+    FieldView, FocusClaim, FocusReturn, Layer, MaxWidth, Node, Paint, PortalAnchor, Shortcut,
+    TextLayout, TextWrap, Tooltip, WorldAnchor, WorldPoint,
 };
 use crate::{Image, ImageStyle};
 use kit_core::kurbo::{Point, Rect, Vec2};
@@ -118,6 +118,7 @@ pub enum LaidKind<Msg> {
         layer: Layer,
         anchor: PortalAnchor,
         dismissal: Dismissal<Msg>,
+        returns: FocusReturn,
         child: Box<LaidNode<Msg>>,
     },
 }
@@ -467,11 +468,13 @@ fn build<Msg>(
             layer,
             anchor,
             dismissal,
+            returns,
             child,
         } => LaidKind::Portal {
             layer,
             anchor,
             dismissal,
+            returns,
             child: Box::new(build(*child, path.index(0), placed, next, text)),
         },
     };

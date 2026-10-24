@@ -61,6 +61,12 @@ pub enum Gesture {
         travel: kit_view::Travel,
         epoch: Epoch,
     },
+    /// A secondary-button press on a control that binds a context action (`Bindings::on_context`). It fires on
+    /// release over the same control; it never activates, drags or takes focus.
+    Context {
+        source: WidgetId,
+        epoch: Epoch,
+    },
     /// A press that began in a text field and grows its selection from `anchor`, a word or a line at a time.
     Select {
         field: WidgetId,
@@ -78,6 +84,7 @@ impl Gesture {
             | Gesture::Drag { epoch, .. }
             | Gesture::Pan { epoch, .. }
             | Gesture::Track { epoch, .. }
+            | Gesture::Context { epoch, .. }
             | Gesture::Select { epoch, .. } => Some(*epoch),
         }
     }
@@ -133,6 +140,11 @@ pub struct UiMemory {
     pub(crate) told: Focus,
     /// keys: the focus-claim ticket last applied per node that carries one (edge-triggered, see `FocusClaim`).
     pub(crate) claims: BTreeMap<WidgetId, u64>,
+    /// The openers of the portals that were open (and said where focus returns) when focus restoration last looked,
+    /// in portal order. One that is missing from the next look closed; see `focus::restore`.
+    pub(crate) openers: Vec<WidgetId>,
+    /// Closed portals whose opener could not take focus back, so the fallback rule chose (see `focus::Restore`).
+    pub(crate) restore_fallbacks: u64,
 }
 
 impl UiMemory {
@@ -152,6 +164,8 @@ impl UiMemory {
             mods: kit_core::Modifiers::default(),
             told: Focus::Unfocused,
             claims: BTreeMap::new(),
+            openers: Vec::new(),
+            restore_fallbacks: 0,
         }
     }
     /// Forget everything except the viewport (screen change, tests).
@@ -176,6 +190,12 @@ impl UiMemory {
     /// request to land asserts this stayed zero; the count is how a dead key is noticed.
     pub fn focus_misses(&self) -> u64 {
         self.focus_misses
+    }
+    /// Popups that closed while their opener could not take focus back (it was removed, disabled or behind a modal),
+    /// so focus went to the fallback instead (see `Router::frame`). A host or test that expects the opener to still
+    /// be there asserts this stayed zero.
+    pub fn restore_fallbacks(&self) -> u64 {
+        self.restore_fallbacks
     }
     /// Close the frame: every pointer's position becomes the base of next frame's `Drag::Held::delta`. Call once per
     /// frame, after the view that reads `drag` was built.
@@ -211,6 +231,7 @@ impl UiMemory {
             Gesture::Idle
             | Gesture::Backdrop { .. }
             | Gesture::Pan { .. }
+            | Gesture::Context { .. }
             | Gesture::Select { .. } => false,
         })
     }
@@ -231,6 +252,7 @@ impl UiMemory {
                 | Gesture::Backdrop { .. }
                 | Gesture::Pan { .. }
                 | Gesture::Select { .. }
+                | Gesture::Context { .. }
                 | Gesture::Track { .. }
                 | Gesture::Drag { .. } => None,
             })
@@ -267,6 +289,7 @@ impl Interaction for UiMemory {
                 | Gesture::Press { .. }
                 | Gesture::Backdrop { .. }
                 | Gesture::Pan { .. }
+                | Gesture::Context { .. }
                 | Gesture::Select { .. }
                 | Gesture::Drag { .. } => None,
             })

@@ -8,7 +8,7 @@ use kit_core::peniko::Color;
 use kit_core::{Border, Shadow, Theme, WidgetId};
 use kit_state::{Act, Applied, Cx, Host, Ident, Intent};
 use kit_view::{A11y, Bindings, Edit, EditorState, Layer, Node, PortalAnchor, Role, Side, Style};
-use kit_view::{Toggle, Weight, column, dismissible, interactive, nothing, panel, row, text};
+use kit_view::{Toggle, Weight, column, dismissible_from, interactive, nothing, panel, row, text};
 
 /// Hue, saturation, value, each finite and in 0..=1. Invalid inputs to conversion/build panic.
 pub type Hsv = [f32; 3];
@@ -246,7 +246,7 @@ where
                 side: Side::Below,
                 gap: th.spacing.xs,
             };
-            dismissible(Layer::Popup, anchor, state.send(Ev::Close), body)
+            dismissible_from(id, Layer::Popup, anchor, state.send(Ev::Close), body)
         }
     };
     column([button, popup])

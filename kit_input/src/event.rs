@@ -21,6 +21,14 @@ pub enum Phase {
     /// Left the window / surface without a button transition.
     Leave,
 }
+/// Which button a pointer press belongs to. Touch and pen contact are `Primary`.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum PointerButton {
+    Primary,
+    /// Right button: the router's context gesture (`Bindings::on_context`).
+    Secondary,
+    Middle,
+}
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct PointerEvent {
     pub id: PointerId,
@@ -29,6 +37,9 @@ pub struct PointerEvent {
     /// Logical px.
     pub at: Point,
     pub pressure: f32,
+    /// Read for `Phase::Down` and `Phase::Up`, where it names the button that changed. `Move`, `Cancel` and `Leave`
+    /// are not about a button; hosts send `Primary` on them and the router ignores it.
+    pub button: PointerButton,
 }
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum DeltaUnit {
@@ -48,6 +59,27 @@ pub enum ImeEvent {
     /// Composition abandoned.
     Cancel,
 }
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum NavDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+/// What the player asked of the UI, whatever device said it. The host maps gamepad buttons or keys to these (a d-pad
+/// to `Move`, A to `Activate`, B to `Cancel`, shoulders to `Next`/`Previous`); the kit has no gamepad library.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum NavAction {
+    /// Focus the nearest focusable control in that direction (see `Router`'s spatial rule in `nav.rs`).
+    Move(NavDirection),
+    /// Enter on the focused control.
+    Activate,
+    /// Escape: let go of a tracked pointer, close the topmost dismissible popup, else drop control focus.
+    Cancel,
+    /// Tab and Shift-Tab: the next or previous control in tree order.
+    Next,
+    Previous,
+}
 #[derive(Clone, PartialEq, Debug)]
 pub enum InputEvent {
     Pointer(PointerEvent),
@@ -65,6 +97,8 @@ pub enum InputEvent {
     /// The modifier keys held now. Hosts send it when they change (or before a pointer press) so a press binding
     /// built with `Bindings::activate_with` sees shift/cmd-click; every `Key` event also updates them.
     Modifiers(Modifiers),
+    /// A device-independent navigation action (gamepad, or keys the host chose to map).
+    Nav(NavAction),
     /// Committed text.
     Text(String),
     Ime(ImeEvent),

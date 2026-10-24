@@ -9,8 +9,8 @@ use crate::router::Claim;
 use crate::{AnimKey, Focus, Key, Modifiers, Router, UiMemory, layers};
 use kit_core::{Time, WidgetId};
 use kit_view::{
-    Availability, Edit, FocusClaim, KeyAnswer, KeyPress, LaidKind, LaidNode, LaidOut, ModalFloor,
-    Stacking,
+    Availability, Edit, FocusClaim, FocusReturn, KeyAnswer, KeyPress, LaidKind, LaidNode, LaidOut,
+    ModalFloor, Stacking,
 };
 use std::hash::Hash;
 
@@ -77,7 +77,7 @@ fn collect<Msg>(node: &LaidNode<Msg>, out: &mut Vec<(WidgetId, FocusClaim)>) {
         } => match availability {
             Availability::Disabled => {}
             Availability::Enabled => {
-                if on.captures_press() {
+                if on.is_focusable() {
                     out.push((*id, on.claim));
                 }
                 collect(child, out);
@@ -121,6 +121,13 @@ pub(crate) fn step(order: &[WidgetId], current: Focus, reverse: bool) -> Option<
         (None, true) => n - 1,
     };
     order.get(index).copied()
+}
+
+/// Focus moved by navigation (Tab, a directional move): the control takes focus and any scroll area around it brings
+/// it into view.
+pub(crate) fn move_focus<Msg>(laid: &LaidOut<Msg>, memory: &mut UiMemory, id: WidgetId, now: Time) {
+    focus_on(memory, id, now);
+    crate::scroll::reveal_focused(laid, memory, id);
 }
 
 pub(crate) fn focus_on(memory: &mut UiMemory, id: WidgetId, now: Time) {
@@ -168,6 +175,65 @@ pub(crate) fn claim<Msg>(laid: &LaidOut<Msg>, memory: &mut UiMemory, now: Time) 
     memory.claims = claims.into_iter().collect();
     if let Some(id) = fresh {
         focus_on(memory, id, now);
+    }
+}
+
+/// Where focus goes when a portal that came from a control closes. The rule, as a type so no case is a silent default.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) enum Restore {
+    /// The opener can still take focus here: it gets it back.
+    Opener(WidgetId),
+    /// The opener is gone, disabled or behind a modal: the first focusable control of the current scope (counted in
+    /// `UiMemory::restore_fallbacks`).
+    FirstInScope(WidgetId),
+    /// The opener cannot take focus and nothing else in scope can: focus is dropped (also counted).
+    Nobody,
+}
+
+pub(crate) fn restore_target(order: &[WidgetId], opener: WidgetId) -> Restore {
+    match (order.contains(&opener), order.first()) {
+        (true, _) => Restore::Opener(opener),
+        (false, Some(first)) => Restore::FirstInScope(*first),
+        (false, None) => Restore::Nobody,
+    }
+}
+
+/// Popups hand focus back. A portal built with `dismissible_from(opener, ..)` that was open at the last look and is
+/// gone now closed (Escape, a chosen item, a press outside, or the component simply stopped building it). Focus goes
+/// back to the opener, per [`Restore`], but only when focus is adrift: unfocused, or on something no longer in scope
+/// (the popup's own item, which left with it). A press outside that landed on a text field keeps the field.
+/// If several portals closed in one frame (a menu and its submenu) the outermost opener (opened first) wins.
+/// Without this, closing a menu left focus on nothing and a keyboard or gamepad player had to start over from the top.
+pub(crate) fn restore<Msg>(laid: &LaidOut<Msg>, memory: &mut UiMemory, now: Time) {
+    let open: Vec<WidgetId> = Stacking::of(laid)
+        .portals
+        .iter()
+        .filter_map(|portal| match portal.returns {
+            FocusReturn::To(opener) => Some(opener),
+            FocusReturn::Nowhere => None,
+        })
+        .collect();
+    let closed = memory.openers.iter().copied().find(|o| !open.contains(o));
+    memory.openers = open;
+    let Some(opener) = closed else { return };
+    let order = order(laid);
+    let adrift = match memory.focus {
+        Focus::Unfocused => true,
+        Focus::On(id) => !order.contains(&id),
+    };
+    if !adrift {
+        return;
+    }
+    match restore_target(&order, opener) {
+        Restore::Opener(id) => focus_on(memory, id, now),
+        Restore::FirstInScope(id) => {
+            memory.restore_fallbacks += 1;
+            focus_on(memory, id, now);
+        }
+        Restore::Nobody => {
+            memory.restore_fallbacks += 1;
+            memory.focus = Focus::Unfocused;
+        }
     }
 }
 
@@ -277,7 +343,7 @@ impl Router {
     ) -> Claim {
         match step(&order(laid), memory.focus, reverse) {
             Some(id) => {
-                focus_on(memory, id, now);
+                move_focus(laid, memory, id, now);
                 Claim::Taken
             }
             None => Claim::Free,

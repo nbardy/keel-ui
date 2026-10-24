@@ -201,6 +201,7 @@ fn pointer(l: &Laid, mem: &mut UiMemory, id: u64, phase: Phase, at: Point) {
         phase,
         at,
         pressure: 1.0,
+        button: kit_input::PointerButton::Primary,
     };
     Router::default().route(&l.laid, mem, InputEvent::Pointer(event), Time::default());
 }
