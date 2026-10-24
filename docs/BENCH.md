@@ -59,6 +59,23 @@ of 10 re-shapes nothing on an unchanged frame. The `layout_cost` steady/one-edit
 The same run's `kit virtual` lines (idle window of `virtual_items`, not repeated here) read 0.08 to 0.16 ms of layout at
 every N. The table above omits them; the egui rows in it are CPU only, as before.
 
+
+### Repeat run (2026-10-25, keel-ui ba34a99)
+
+Two more back-to-back runs, same machine, 1-minute load average 14 at the start of the first and 8.5 at the end of
+the second (no other cargo or Codex jobs running). Medians in ms per frame; the two runs agreed within about 5%, and
+read about 20% above the table above, which is this machine's spread at this load, not a regression.
+
+| Rows | kit layout | kit build + layout + paint | kit total (incl. GPU record) | kit virtual total | egui run + tessellate |
+|---:|---:|---:|---:|---:|---:|
+| 100 | 0.39 | 0.59 | 1.30 | 0.62 | 0.32 |
+| 1,000 | 5.8 to 6.0 | 9.1 | 12.0 to 12.4 | 0.64 to 0.65 | 2.8 to 3.0 |
+| 10,000 | 92 | 138 | 166 | 0.66 to 0.72 | 33 |
+
+Against the first run of 2026-10-24 (load 9 to 14), plain-list layout is about 6x faster at 100 rows (2.42 ms), 5x
+at 1,000 (28.5 ms) and 3.5x at 10,000 (326 ms). Plain lists remain 3 to 5x behind egui's whole CPU frame; a
+virtualised list costs the same at any length.
+
 ## Results (2026-10-24, before both layout changes)
 
 Run on 2026-10-24 (13:4x local). One run, release build.
