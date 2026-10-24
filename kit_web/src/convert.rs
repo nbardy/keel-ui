@@ -52,11 +52,68 @@ pub fn key_event(dom_key: &str, state: KeyState, mods: Modifiers) -> Option<Inpu
     key_from_dom(dom_key).map(|key| InputEvent::Key { key, state, mods })
 }
 
+/// The DOM's `PointerEvent.pointerType`, as the three devices the kit knows. The DOM allows the empty string and
+/// user-agent-defined types for a device it cannot name: those are the mouse, as in `kit_winit`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DomDevice {
+    Mouse,
+    Touch,
+    Pen,
+}
+
+pub fn pointer_device(pointer_type: &str) -> DomDevice {
+    match pointer_type {
+        "touch" => DomDevice::Touch,
+        "pen" => DomDevice::Pen,
+        _unknown_or_mouse => DomDevice::Mouse,
+    }
+}
+
+/// `MouseEvent.button`, named. The kit's pointer has three buttons; back and forward (the mouse's side buttons) are
+/// here so a host that reads the DOM itself can decide what they mean. [`pointer`] drops them, as it always has.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DomButton {
+    /// -1: no button changed (a move).
+    Unchanged,
+    Primary,
+    Middle,
+    Secondary,
+    Back,
+    Forward,
+    /// Any other number: the fifth-and-up buttons, and a pen's eraser (5). Carried as the DOM sent it, not guessed at.
+    Other(i16),
+}
+
+impl DomButton {
+    pub fn of(dom_button: i16) -> Self {
+        match dom_button {
+            -1 => DomButton::Unchanged,
+            0 => DomButton::Primary,
+            1 => DomButton::Middle,
+            2 => DomButton::Secondary,
+            3 => DomButton::Back,
+            4 => DomButton::Forward,
+            other => DomButton::Other(other),
+        }
+    }
+
+    /// The kit's button, for the three it has. Back, forward and the rest are the host's to handle.
+    pub fn kit(self) -> Option<PointerButton> {
+        match self {
+            DomButton::Primary => Some(PointerButton::Primary),
+            DomButton::Middle => Some(PointerButton::Middle),
+            DomButton::Secondary => Some(PointerButton::Secondary),
+            DomButton::Unchanged | DomButton::Back | DomButton::Forward | DomButton::Other(_) => {
+                None
+            }
+        }
+    }
+}
+
 /// The numbers of one DOM `PointerEvent`.
 #[derive(Copy, Clone, Debug)]
 pub struct DomPointer<'a> {
-    /// `PointerEvent.pointerType`: `"mouse"`, `"pen"` or `"touch"`. Anything else (the DOM allows the empty string and
-    /// user-agent-defined types for an unknown device) behaves as the mouse.
+    /// `PointerEvent.pointerType`: `"mouse"`, `"pen"` or `"touch"` (see [`pointer_device`]).
     pub pointer_type: &'a str,
     pub id: i32,
     /// `MouseEvent.button`: which button changed on a down or up (0 left, 1 middle, 2 right, 3 back, 4 forward). On a
@@ -72,16 +129,16 @@ pub struct DomPointer<'a> {
 /// event, and a press binding such as shift-click reads them from the router). A mouse side button (back, forward) is
 /// not one of the kit's three and gives nothing, on press and release alike.
 pub fn pointer(phase: Phase, dom: &DomPointer<'_>) -> Vec<InputEvent> {
-    let (kind, id) = match dom.pointer_type {
-        "touch" => (
+    let (kind, id) = match pointer_device(dom.pointer_type) {
+        DomDevice::Touch => (
             PointerKind::Touch,
             PointerId(u64::from(dom.id.unsigned_abs())),
         ),
-        "pen" => (
+        DomDevice::Pen => (
             PointerKind::Pen,
             PointerId(u64::from(dom.id.unsigned_abs())),
         ),
-        _unknown_or_mouse => (PointerKind::Mouse, MOUSE),
+        DomDevice::Mouse => (PointerKind::Mouse, MOUSE),
     };
     let pressure = match kind {
         // The DOM reports 0.5 for a pressed mouse and 0 otherwise: not a force. `kit_winit` also sends 1.
@@ -89,7 +146,7 @@ pub fn pointer(phase: Phase, dom: &DomPointer<'_>) -> Vec<InputEvent> {
         PointerKind::Touch | PointerKind::Pen => dom.pressure,
     };
     let button = match (phase, kind) {
-        (Phase::Down | Phase::Up, PointerKind::Mouse) => mouse_button(dom.button),
+        (Phase::Down | Phase::Up, PointerKind::Mouse) => DomButton::of(dom.button).kit(),
         // Touch and pen contact is the primary button whatever `button` says (a pen's barrel and eraser are not presses).
         (Phase::Down | Phase::Up, PointerKind::Touch | PointerKind::Pen)
         | (Phase::Move | Phase::Cancel | Phase::Leave, _) => Some(PointerButton::Primary),
@@ -113,29 +170,71 @@ pub fn pointer(phase: Phase, dom: &DomPointer<'_>) -> Vec<InputEvent> {
     }
 }
 
-fn mouse_button(dom_button: i16) -> Option<PointerButton> {
-    match dom_button {
-        0 => Some(PointerButton::Primary),
-        1 => Some(PointerButton::Middle),
-        2 => Some(PointerButton::Secondary),
-        _back_forward_or_other => None,
+/// A host's own identity for a DOM pointer: `kit_winit`'s mouse id is [`MOUSE`], the game's is its own scheme. The host
+/// implements this and [`identify_pointer`] reads the device and button for it. `&mut self` lets a host keep state
+/// (a slot per live touch, say); a stateless one ignores it.
+pub trait PointerIdentity {
+    type Id: Copy + Eq + std::fmt::Debug;
+    fn identify(&mut self, device: DomDevice, pointer_id: i32) -> Self::Id;
+}
+
+/// One DOM pointer as the host names it: its identity, the device, and the button (side buttons included).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct IdentifiedPointer<I> {
+    pub id: I,
+    pub device: DomDevice,
+    pub button: DomButton,
+}
+
+/// The host's identity for a DOM pointer (`pointerId`, `pointerType`, `button`), with the device and the button read
+/// the same way [`pointer`] reads them, so the two paths cannot disagree about which device an event came from.
+pub fn identify_pointer<P: PointerIdentity>(
+    identity: &mut P,
+    pointer_type: &str,
+    pointer_id: i32,
+    button: i16,
+) -> IdentifiedPointer<P::Id> {
+    let device = pointer_device(pointer_type);
+    IdentifiedPointer {
+        id: identity.identify(device, pointer_id),
+        device,
+        button: DomButton::of(button),
+    }
+}
+
+/// A `WheelEvent.deltaMode` the spec does not define. Named, so a host can log it rather than guess a unit.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct UnknownDeltaMode(pub u32);
+
+impl std::fmt::Display for UnknownDeltaMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "WheelEvent.deltaMode {} is not in the spec", self.0)
+    }
+}
+
+/// The kit's unit for a `WheelEvent.deltaMode`: 0 pixels (CSS px, already logical), 1 lines, 2 pages.
+pub fn delta_unit(delta_mode: u32) -> Result<DeltaUnit, UnknownDeltaMode> {
+    match delta_mode {
+        0 => Ok(DeltaUnit::Pixels),
+        1 => Ok(DeltaUnit::Lines),
+        2 => Ok(DeltaUnit::Pages),
+        other => Err(UnknownDeltaMode(other)),
     }
 }
 
 /// A wheel turn at `at` (CSS px from the canvas). The DOM's deltas are positive when the view scrolls down or right, as
-/// the kit's are, so no sign flips (winit's are the other way round). `delta_mode` is `WheelEvent.deltaMode`: 0 pixels
-/// (CSS px, already logical), 1 lines, 2 pages. Any other value is not in the spec and gives nothing.
-pub fn wheel(delta_x: f64, delta_y: f64, delta_mode: u32, at: Point) -> Option<InputEvent> {
-    let unit = match delta_mode {
-        0 => Some(DeltaUnit::Pixels),
-        1 => Some(DeltaUnit::Lines),
-        2 => Some(DeltaUnit::Pages),
-        _not_in_the_spec => None,
-    };
-    unit.map(|unit| InputEvent::Wheel {
+/// the kit's are, so no sign flips (winit's are the other way round). A `delta_mode` the spec does not define is an error
+/// the host reports; no turn is made up for it.
+pub fn wheel(
+    delta_x: f64,
+    delta_y: f64,
+    delta_mode: u32,
+    at: Point,
+) -> Result<InputEvent, UnknownDeltaMode> {
+    Ok(InputEvent::Wheel {
         at,
         delta: Vec2::new(delta_x, delta_y),
-        unit,
+        unit: delta_unit(delta_mode)?,
     })
 }
 
@@ -307,7 +406,7 @@ mod tests {
         let at = Point::new(5.0, 6.0);
         assert_eq!(
             wheel(1.0, 53.0, 0, at),
-            Some(InputEvent::Wheel {
+            Ok(InputEvent::Wheel {
                 at,
                 delta: Vec2::new(1.0, 53.0),
                 unit: DeltaUnit::Pixels
@@ -315,19 +414,90 @@ mod tests {
         );
         assert!(matches!(
             wheel(0.0, 3.0, 1, at),
-            Some(InputEvent::Wheel {
+            Ok(InputEvent::Wheel {
                 unit: DeltaUnit::Lines,
                 ..
             })
         ));
         assert!(matches!(
             wheel(0.0, 1.0, 2, at),
-            Some(InputEvent::Wheel {
+            Ok(InputEvent::Wheel {
                 unit: DeltaUnit::Pages,
                 ..
             })
         ));
-        assert_eq!(wheel(0.0, 1.0, 3, at), None);
+        // A made-up unit would scroll by the wrong amount: the mode is reported, and the turn is not sent.
+        assert_eq!(wheel(0.0, 1.0, 3, at), Err(UnknownDeltaMode(3)));
+    }
+
+    /// The host that feeds its own input maps `deltaMode` without an event. Unknown modes are an error, not pixels.
+    #[test]
+    fn delta_modes_map_to_units_and_unknown_modes_are_reported() {
+        assert_eq!(delta_unit(0), Ok(DeltaUnit::Pixels));
+        assert_eq!(delta_unit(1), Ok(DeltaUnit::Lines));
+        assert_eq!(delta_unit(2), Ok(DeltaUnit::Pages));
+        assert_eq!(delta_unit(7), Err(UnknownDeltaMode(7)));
+    }
+
+    /// The side buttons reach a host that asks for them (back and forward are not the kit's, but they are presses a
+    /// game may bind), while the kit's own path still sends nothing for them. A host that routed side buttons through
+    /// `kit()` would lose them here.
+    #[test]
+    fn a_host_sees_the_side_buttons_the_kit_does_not() {
+        struct Raw;
+        impl PointerIdentity for Raw {
+            type Id = i32;
+            fn identify(&mut self, _device: DomDevice, pointer_id: i32) -> i32 {
+                pointer_id
+            }
+        }
+        assert_eq!(
+            identify_pointer(&mut Raw, "mouse", 0, 3).button,
+            DomButton::Back
+        );
+        assert_eq!(
+            identify_pointer(&mut Raw, "mouse", 0, 4).button,
+            DomButton::Forward
+        );
+        assert_eq!(
+            identify_pointer(&mut Raw, "mouse", 0, 5).button,
+            DomButton::Other(5)
+        );
+        assert!(pointer(Phase::Down, &mouse(3)).is_empty());
+    }
+
+    /// The host's identity gets the device the DOM named, with the same unknown-type rule `pointer` uses: an unnamed
+    /// device is the mouse, never a touch. A mapping that read the type differently would split one pointer in two.
+    #[test]
+    fn identify_reads_the_device_the_way_pointer_does() {
+        struct Echo;
+        impl PointerIdentity for Echo {
+            type Id = (DomDevice, i32);
+            fn identify(&mut self, device: DomDevice, pointer_id: i32) -> (DomDevice, i32) {
+                (device, pointer_id)
+            }
+        }
+        assert_eq!(
+            identify_pointer(&mut Echo, "", 3, 0).id,
+            (DomDevice::Mouse, 3)
+        );
+        assert_eq!(
+            identify_pointer(&mut Echo, "touch", 7, 0).id,
+            (DomDevice::Touch, 7)
+        );
+        let pen = identify_pointer(&mut Echo, "pen", 9, 0);
+        assert_eq!((pen.id, pen.device), ((DomDevice::Pen, 9), DomDevice::Pen));
+        let [_, InputEvent::Pointer(p)] = pointer(
+            Phase::Down,
+            &DomPointer {
+                pointer_type: "",
+                id: 3,
+                ..mouse(0)
+            },
+        )[..] else {
+            panic!("a press is modifiers then a pointer")
+        };
+        assert_eq!(p.id, MOUSE);
     }
 
     /// `KeyboardEvent.key` names: case and Shift must not matter (a hotkey is `1`, not `!`... the key is whatever the

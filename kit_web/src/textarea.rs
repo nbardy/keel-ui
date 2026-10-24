@@ -23,7 +23,8 @@ fn listen(
     Ok(())
 }
 
-pub(crate) fn key_modifiers(event: &web_sys::KeyboardEvent) -> Modifiers {
+/// The modifiers a `KeyboardEvent` says were held.
+pub fn key_modifiers(event: &web_sys::KeyboardEvent) -> Modifiers {
     Modifiers {
         shift: event.shift_key(),
         ctrl: event.ctrl_key(),
@@ -32,7 +33,8 @@ pub(crate) fn key_modifiers(event: &web_sys::KeyboardEvent) -> Modifiers {
     }
 }
 
-pub(crate) fn mouse_modifiers(event: &web_sys::MouseEvent) -> Modifiers {
+/// The modifiers a `MouseEvent` (or a `PointerEvent`, which extends it) says were held.
+pub fn mouse_modifiers(event: &web_sys::MouseEvent) -> Modifiers {
     Modifiers {
         shift: event.shift_key(),
         ctrl: event.ctrl_key(),
@@ -41,8 +43,10 @@ pub(crate) fn mouse_modifiers(event: &web_sys::MouseEvent) -> Modifiers {
     }
 }
 
-/// The hidden element and the listeners that turn its events into [`Entry`]s for `on_entry`.
-pub(crate) struct TextBridge {
+/// The hidden element and the listeners that turn its events into [`Entry`]s for `on_entry`. A host holds it for as long
+/// as it draws: dropping it removes the element. Each frame it is told where text entry is ([`TextBridge::follow`]); the
+/// `Entry`s it reports go through [`crate::text::entry_events`] with the host's own [`Paste`].
+pub struct TextBridge {
     area: HtmlTextAreaElement,
     /// Kept alive as long as the element is.
     _listeners: Vec<Listener>,
@@ -51,7 +55,7 @@ pub(crate) struct TextBridge {
 impl TextBridge {
     /// Attach the element beside `canvas` (a sibling, so its `position: absolute` shares the canvas's containing block
     /// and page scroll cannot move it) and start listening.
-    pub(crate) fn attach(
+    pub fn attach(
         canvas: &web_sys::HtmlCanvasElement,
         on_entry: impl Fn(Entry) + 'static,
     ) -> Result<Self, JsValue> {
@@ -178,14 +182,14 @@ impl TextBridge {
     }
 
     /// Whether `target` is the hidden element (its key events are the bridge's, not the window handler's).
-    pub(crate) fn owns(&self, target: Option<web_sys::EventTarget>) -> bool {
+    pub fn owns(&self, target: Option<web_sys::EventTarget>) -> bool {
         let area: &web_sys::EventTarget = self.area.as_ref();
         target.is_some_and(|target| target == *area)
     }
 
     /// Put the element where text entry is: at the caret and focused while a field has focus, blurred (which hides the
     /// soft keyboard) when none does. `caret` is in the canvas's CSS px (the kit's logical px). Call once per frame.
-    pub(crate) fn follow(
+    pub fn follow(
         &self,
         target: &TextTarget,
         canvas: &web_sys::HtmlCanvasElement,
@@ -257,44 +261,61 @@ impl Drop for TextBridge {
     }
 }
 
-/// The browser clipboard. A write goes through `navigator.clipboard.writeText` (fire and forget: a refusal is logged,
-/// not retried). A read cannot be answered from the browser at all: the text arrives in the element's `paste` event, so
-/// the read is answered from (or waits on) the shared [`Paste`] state, which `entry_events` also drives.
+/// What `navigator.clipboard.writeText` returned. A browser that returns a promise settles it later, and a refusal is
+/// logged then. One that returns something else has nothing to wait on and nothing to report, so the write is
+/// `Synchronous`: a typed outcome, not an error the caller has to ignore.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WriteOutcome {
+    Settling,
+    Synchronous,
+}
+
+/// `navigator.clipboard.writeText(text)`. Fire and forget: a refusal is logged when its promise settles, not retried.
+/// An absent clipboard API, or one whose call throws, is an error.
 ///
 /// `navigator.clipboard` is reached through `js_sys::Reflect`: web-sys gates its typed binding behind the
 /// `web_sys_unstable_apis` cfg, which would need a RUSTFLAGS setting on every build of this crate.
-pub(crate) struct WebClipboard {
-    pub paste: Rc<RefCell<Paste>>,
+pub fn write_text(text: &str) -> Result<WriteOutcome, ClipboardError> {
+    let navigator = web_sys::window()
+        .ok_or_else(|| ClipboardError::Failed("no window".into()))?
+        .navigator();
+    let clipboard = js_sys::Reflect::get(&navigator, &"clipboard".into())
+        .ok()
+        .filter(|clipboard| !clipboard.is_undefined())
+        .ok_or(ClipboardError::Unsupported)?;
+    let write = js_sys::Reflect::get(&clipboard, &"writeText".into())
+        .ok()
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        .ok_or(ClipboardError::Unsupported)?;
+    let returned = write
+        .call1(&clipboard, &text.into())
+        .map_err(|error| ClipboardError::Failed(format!("{error:?}")))?;
+    match returned.dyn_into::<js_sys::Promise>() {
+        Ok(promise) => {
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Err(error) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                    web_sys::console::warn_2(&"kit_web clipboard write refused:".into(), &error);
+                }
+            });
+            Ok(WriteOutcome::Settling)
+        }
+        Err(_) => Ok(WriteOutcome::Synchronous),
+    }
 }
 
-impl Clipboard for WebClipboard {
+/// The browser clipboard, over the caller's [`Paste`] state. A write goes out through [`write_text`]. A read cannot be
+/// answered from the browser at all: the text arrives in the textarea's `paste` event, so the read is answered from (or
+/// waits on) the `Paste` that `entry_events` also drives. The caller owns that state and lends it for one frame.
+pub struct WebClipboard<'a> {
+    pub paste: &'a mut Paste,
+}
+
+impl Clipboard for WebClipboard<'_> {
     fn write(&mut self, text: &str) -> Result<(), ClipboardError> {
-        let navigator = web_sys::window()
-            .ok_or_else(|| ClipboardError::Failed("no window".into()))?
-            .navigator();
-        let clipboard = js_sys::Reflect::get(&navigator, &"clipboard".into())
-            .ok()
-            .filter(|clipboard| !clipboard.is_undefined())
-            .ok_or(ClipboardError::Unsupported)?;
-        let write = js_sys::Reflect::get(&clipboard, &"writeText".into())
-            .ok()
-            .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
-            .ok_or(ClipboardError::Unsupported)?;
-        let promise = write
-            .call1(&clipboard, &text.into())
-            .map_err(|error| ClipboardError::Failed(format!("{error:?}")))?;
-        let promise = promise
-            .dyn_into::<js_sys::Promise>()
-            .map_err(|_| ClipboardError::Failed("writeText did not return a promise".into()))?;
-        wasm_bindgen_futures::spawn_local(async move {
-            if let Err(error) = wasm_bindgen_futures::JsFuture::from(promise).await {
-                web_sys::console::warn_2(&"clipboard write refused:".into(), &error);
-            }
-        });
-        Ok(())
+        write_text(text).map(|_| ())
     }
 
     fn read(&mut self, ticket: PasteTicket) -> Result<ClipboardRead, ClipboardError> {
-        Ok(self.paste.borrow_mut().read(ticket))
+        Ok(self.paste.read(ticket))
     }
 }

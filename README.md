@@ -334,7 +334,10 @@ maturity matter most; choose the kit when you prefer a component tree with data-
   keys typed in that frame are lost. A canvas moved to a monitor of another pixel density without being resized is
   redrawn only at the next input. There is no DOM mirror of the controls (the game's `kit_mirror` stays in the game),
   no long-press, and no cursor icon. Only desktop Chrome has been driven (`kit_web/check_browser.mjs`); iOS Safari and
-  Android keyboards are untested here.
+  Android keyboards are untested here. A host that already has its own DOM listeners (the game does) can use the
+  pieces without `start`: `identify_pointer` gives it the mouse's back and forward buttons, which the kit's pointer
+  drops, and `TextBridge` and `WebClipboard` take the caller's `Paste`. The kit's own `pointer` still sends nothing for
+  the side buttons.
 - **Per-frame costs to know about.** The tree is rebuilt every frame, vertex buffers are created per render, and each
   translucent group with two or more items is a full-target offscreen pass. Measure your largest screen.
 - **Fewer widgets than egui,** and no built-in docking, plotting or rich-text editing.
@@ -557,7 +560,7 @@ game that uses it, UI included, is 2.16 MB gzipped as wasm.
 | `kit_test` | the test driver: `Handle` drives a real view by role and label through the real router, and checks goldens (dev-only, for the kit and for apps) |
 | `kit_widgets` | the components; short, styled by theme tokens, meant to be copied |
 | `kit_winit` | winit window events to `InputEvent`s, IME area, arboard clipboard; the `starter` example |
-| `kit_web` | DOM events to `InputEvent`s, the hidden IME/clipboard textarea, a WebGPU canvas loop that draws only on `Redraw` demand (wasm); the browser `starter` example |
+| `kit_web` | DOM events to `InputEvent`s, the hidden IME/clipboard textarea, a WebGPU canvas loop that draws only on `Redraw` demand (wasm); for a host with its own input layer, the textarea (`TextBridge`), the clipboard over a caller's `Paste`, `identify_pointer` (side buttons included), `delta_unit` and `platform`; the browser `starter` example |
 
 ## Try it
 

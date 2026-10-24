@@ -19,15 +19,23 @@
 //!   because the page never scrolls or tabs away from the canvas.
 //! - Text comes from a hidden `<textarea>` that follows the caret ([`text`]), not from key events.
 //! - The clipboard read is asynchronous: a paste arrives as the textarea's `paste` event.
+//!
+//! A host with its own input layer (a game that already routes its own DOM events) uses the pieces without [`start`]:
+//! the conversions in [`convert`] and [`text`] take the DOM's numbers; [`identify_pointer`] maps a DOM pointer to the
+//! host's own identity, side buttons included; [`delta_unit`] maps a wheel's `deltaMode`; and on wasm, [`TextBridge`]
+//! and [`WebClipboard`] put the hidden textarea and the clipboard over the host's own [`Paste`] state, and [`platform`]
+//! reads the browser's platform with a console report for each lookup that fails.
 pub mod convert;
 pub mod schedule;
 pub mod text;
 
 pub use convert::{
-    DomPointer, MOUSE, backing_size, key_event, key_from_dom, platform_of, pointer, viewport, wheel,
+    DomButton, DomDevice, DomPointer, IdentifiedPointer, MOUSE, PointerIdentity, UnknownDeltaMode,
+    backing_size, delta_unit, identify_pointer, key_event, key_from_dom, platform_of, pointer,
+    pointer_device, viewport, wheel,
 };
 pub use schedule::{Wake, wake};
-pub use text::{Composer, Entry, Keydown, Reported, entry_events};
+pub use text::{Composer, Entry, Keydown, Paste, Reported, entry_events, is_paste_chord, key_for};
 
 #[cfg(target_arch = "wasm32")]
 mod host;
@@ -35,4 +43,8 @@ mod host;
 mod textarea;
 
 #[cfg(target_arch = "wasm32")]
-pub use host::{App, FrameInput, FrameOutput, Gpu, Running, log_panics, start};
+pub use host::{App, FrameInput, FrameOutput, Gpu, Running, log_panics, platform, start};
+#[cfg(target_arch = "wasm32")]
+pub use textarea::{
+    TextBridge, WebClipboard, WriteOutcome, key_modifiers, mouse_modifiers, write_text,
+};

@@ -112,7 +112,6 @@ struct Host<A> {
     config: wgpu::SurfaceConfiguration,
     gpu: Gpu,
     app: A,
-    clipboard: WebClipboard,
     extent: Extent,
     last_ms: f64,
     clock: Time,
@@ -298,14 +297,19 @@ impl<A: App> Core<A> {
         let view = texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let out = host.app.frame(FrameInput {
-            events,
-            viewport: convert::viewport(extent.css, extent.dpr),
-            view: &view,
-            size: (host.config.width, host.config.height),
-            dt,
-            clipboard: &mut host.clipboard,
-        })?;
+        // The paste state is borrowed for the app's frame only: a `paste` callback must not find it taken.
+        let out = {
+            let mut paste = self.paste.borrow_mut();
+            let mut clipboard = WebClipboard { paste: &mut paste };
+            host.app.frame(FrameInput {
+                events,
+                viewport: convert::viewport(extent.css, extent.dpr),
+                view: &view,
+                size: (host.config.width, host.config.height),
+                dt,
+                clipboard: &mut clipboard,
+            })?
+        };
         host.gpu.queue.present(texture);
         self.frames.set(self.frames.get() + 1);
         self.unasked.set(out.paste_ticket);
@@ -344,22 +348,55 @@ fn canvas_point(canvas: &HtmlCanvasElement, event: &web_sys::MouseEvent) -> Poin
     )
 }
 
-fn platform() -> Result<Platform, JsValue> {
-    let navigator = web_sys::window().ok_or("no window")?.navigator();
-    let text = |value: Result<JsValue, JsValue>| {
-        value
-            .ok()
-            .and_then(|value| value.as_string())
-            .unwrap_or_default()
+/// The browser's platform, from what it says about itself (see [`convert::platform_of`]). A witness the browser does not
+/// have (no `userAgentData` in older browsers) says nothing and is not reported. A lookup that throws is logged to the
+/// console, and that witness says nothing either: the platform is then decided by the others.
+pub fn platform(navigator: &web_sys::Navigator) -> Platform {
+    // `Reflect::get` throws on an undefined target, so an absent `userAgentData` is checked before its `platform`.
+    let data_platform = match js_sys::Reflect::get(navigator, &"userAgentData".into()) {
+        Ok(data) if data.is_undefined() => String::new(),
+        Ok(data) => witness(
+            "userAgentData.platform",
+            js_sys::Reflect::get(&data, &"platform".into()),
+        ),
+        Err(error) => {
+            warn_lookup("userAgentData", &error);
+            String::new()
+        }
     };
-    // `userAgentData` is not in every browser: absent, it names nothing, which `platform_of` treats as no witness.
-    let data_platform = text(
-        js_sys::Reflect::get(&navigator, &"userAgentData".into())
-            .and_then(|data| js_sys::Reflect::get(&data, &"platform".into())),
+    let platform = match navigator.platform() {
+        Ok(platform) => platform,
+        Err(error) => {
+            warn_lookup("navigator.platform", &error);
+            String::new()
+        }
+    };
+    let agent = match navigator.user_agent() {
+        Ok(agent) => agent,
+        Err(error) => {
+            warn_lookup("navigator.userAgent", &error);
+            String::new()
+        }
+    };
+    convert::platform_of(&[&data_platform, &platform, &agent])
+}
+
+/// A string witness read off a value: a non-string says nothing, a lookup that threw is logged.
+fn witness(name: &str, lookup: Result<JsValue, JsValue>) -> String {
+    match lookup {
+        Ok(value) => value.as_string().unwrap_or_default(),
+        Err(error) => {
+            warn_lookup(name, &error);
+            String::new()
+        }
+    }
+}
+
+fn warn_lookup(name: &str, error: &JsValue) {
+    web_sys::console::warn_2(
+        &format!("kit_web platform: {name} lookup failed").into(),
+        error,
     );
-    let platform = navigator.platform().unwrap_or_default();
-    let agent = navigator.user_agent().unwrap_or_default();
-    Ok(convert::platform_of(&[&data_platform, &platform, &agent]))
 }
 
 /// A WebGPU surface on `canvas`, a device for it, and the surface configured at the canvas's current size.
@@ -415,16 +452,17 @@ pub async fn start<A: App>(
     let window = web_sys::window().ok_or("no window")?;
     let extent = measure(&canvas)?;
     let (surface, config, gpu) = gpu(&canvas, extent).await?;
-    let app = build(&gpu, convert::viewport(extent.css, extent.dpr), platform()?);
+    let app = build(
+        &gpu,
+        convert::viewport(extent.css, extent.dpr),
+        platform(&window.navigator()),
+    );
     let paste = Rc::new(RefCell::new(Paste::default()));
     let mut host = Host {
         surface,
         config,
         gpu,
         app,
-        clipboard: WebClipboard {
-            paste: paste.clone(),
-        },
         extent,
         last_ms: window.performance().map_or(0.0, |p| p.now()),
         clock: Time::default(),
@@ -545,12 +583,12 @@ fn listen<A: App>(
             // The page never scrolls: the wheel is the kit's scroll areas' or nobody's.
             event.prevent_default();
             let at = canvas_point(&core.canvas, &event);
-            core.push(convert::wheel(
-                event.delta_x(),
-                event.delta_y(),
-                event.delta_mode(),
-                at,
-            ));
+            match convert::wheel(event.delta_x(), event.delta_y(), event.delta_mode(), at) {
+                Ok(wheel) => core.push([wheel]),
+                Err(error) => {
+                    web_sys::console::warn_1(&format!("kit_web wheel: {error}").into());
+                }
+            }
         })),
     )?;
     // The secondary button is the kit's context gesture, not the browser's menu.
