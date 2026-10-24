@@ -5,7 +5,7 @@ mod common;
 use common::*;
 use kit_core::kurbo::{Insets, Size, Vec2};
 use kit_core::{Axis, Identity, Viewport};
-use kit_layout::TaffyLayout;
+use kit_layout::{Reuse, TaffyLayout};
 use kit_view::taffy::style_helpers::{auto, fr, length, line, span};
 use kit_view::*;
 
@@ -86,7 +86,9 @@ fn grid_line(g: &mut Lcg, lines: u64, max_span: u64) -> taffy::Line<taffy::GridP
     }
 }
 
-fn tree(g: &mut Lcg, depth: u32, in_grid: bool) -> Node<()> {
+/// `salt` changes only what the shape does not depend on: text lengths. The same seed with another salt is the same
+/// tree shape and the same styles with different leaf content, as a label that counts up is from frame to frame.
+fn tree(g: &mut Lcg, depth: u32, in_grid: bool, salt: u64) -> Node<()> {
     let pick = if depth == 0 {
         7 + g.next(4)
     } else {
@@ -98,11 +100,11 @@ fn tree(g: &mut Lcg, depth: u32, in_grid: bool) -> Node<()> {
         (Content::Taffy, taffy::Display::Grid)
     );
     // A wrapper's child is placed by the wrapper's parent; a scroll or world child is not placed by a grid.
-    let child = |g: &mut Lcg| Box::new(tree(g, depth - 1, in_grid));
-    let detached = |g: &mut Lcg| Box::new(tree(g, depth - 1, false));
+    let child = |g: &mut Lcg| Box::new(tree(g, depth - 1, in_grid, salt));
+    let detached = |g: &mut Lcg| Box::new(tree(g, depth - 1, false, salt));
     let kids = |g: &mut Lcg| {
         (0..g.next(4))
-            .map(|_| tree(g, depth - 1, grid_kids))
+            .map(|_| tree(g, depth - 1, grid_kids, salt))
             .collect::<Vec<_>>()
     };
     let ts = TextStyle::new(10.0, kit_core::peniko::Color::from_rgba8(0, 0, 0, 255));
@@ -146,7 +148,7 @@ fn tree(g: &mut Lcg, depth: u32, in_grid: bool) -> Node<()> {
         },
         7 => Node::Text {
             style: st,
-            text: RichText::plain("w".repeat(g.next(30) as usize)),
+            text: RichText::plain("w".repeat(((g.next(30) + salt) % 30) as usize)),
             text_style: ts.clone().wrap(TextWrap::WordOrGlyph),
         },
         8 => Node::TextField {
@@ -192,8 +194,8 @@ fn always_emit_one_placed_per_node_in_a_consistent_order() {
     let mut vp = Viewport::new(Size::new(320.0, 480.0), 2.0);
     vp.safe_area = Insets::new(0.0, 20.0, 0.0, 10.0);
     for seed in 0..400 {
-        let n = tree(&mut Lcg(seed), 4, false).count();
-        let root = tree(&mut Lcg(seed), 4, false);
+        let n = tree(&mut Lcg(seed), 4, false, 0).count();
+        let root = tree(&mut Lcg(seed), 4, false, 0);
         let laid = TaffyLayout::new()
             .layout(root, vp, &mut text_system(), &Plane)
             .unwrap_or_else(|e| panic!("seed {seed}: {e:?}"));
@@ -201,4 +203,47 @@ fn always_emit_one_placed_per_node_in_a_consistent_order() {
         assert_eq!(all.len(), n, "seed {seed}");
         assert!(all.iter().all(|(r, _)| finite(*r)), "seed {seed}");
     }
+}
+
+/// The layout keeps its taffy tree between frames. Whatever it keeps, a frame must come out exactly as if the layout
+/// had never seen the previous one: same tree again, same shape with other text, another viewport, another shape.
+#[test]
+fn a_kept_layout_agrees_with_a_fresh_one_after_every_kind_of_change() {
+    let mut fonts = text_system();
+    let mut kept = TaffyLayout::new();
+    let (mut rebuilt, mut patched) = (0, 0);
+    for seed in 0..300 {
+        // (salt, viewport width, safe-area top): identical, text only, viewport, both; then the next seed reshapes.
+        for (salt, width, top) in [
+            (0, 320.0, 20.0),
+            (0, 320.0, 20.0),
+            (7, 320.0, 20.0),
+            (7, 200.0, 20.0),
+            (11, 200.0, 0.0),
+        ] {
+            let mut vp = Viewport::new(Size::new(width, 480.0), 2.0);
+            vp.safe_area = Insets::new(0.0, top, 0.0, 10.0);
+            let tree = || tree(&mut Lcg(seed), 4, false, salt);
+            let fresh = TaffyLayout::new()
+                .layout(tree(), vp, &mut fonts, &Plane)
+                .unwrap_or_else(|e| panic!("seed {seed}: {e:?}"));
+            let again = kept
+                .layout(tree(), vp, &mut fonts, &Plane)
+                .unwrap_or_else(|e| panic!("seed {seed}: {e:?}"));
+            assert_eq!(
+                pre_order(&again),
+                pre_order(&fresh),
+                "seed {seed} salt {salt} width {width}"
+            );
+            match kept.last_reuse() {
+                Reuse::Rebuilt { .. } => rebuilt += 1,
+                Reuse::Patched { .. } => patched += 1,
+            }
+        }
+    }
+    // Both paths were exercised: trees that were patched in place and trees that were rebuilt.
+    assert!(
+        rebuilt > 0 && patched > 0,
+        "rebuilt {rebuilt} patched {patched}"
+    );
 }

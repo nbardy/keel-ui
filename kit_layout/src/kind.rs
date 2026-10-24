@@ -44,6 +44,52 @@ pub(crate) enum Leaf<'a> {
     Empty,
 }
 
+/// A [`Leaf`] kept past the frame whose `Node` tree it borrowed from: exactly the inputs its measure reads, owned.
+/// The retained layout compares the next frame's leaf against it to learn whether a measured size is still good.
+pub(crate) enum Held {
+    Text { text: RichText, style: TextStyle },
+    Field { view: FieldView, field: FieldStyle },
+    Image(Size),
+    Empty,
+}
+
+impl Leaf<'_> {
+    pub(crate) fn hold(&self) -> Held {
+        match self {
+            Leaf::Text { text, style } => Held::Text {
+                text: (*text).clone(),
+                style: (*style).clone(),
+            },
+            Leaf::Field { view, field } => Held::Field {
+                view: (*view).clone(),
+                field: (*field).clone(),
+            },
+            Leaf::Image(size) => Held::Image(*size),
+            Leaf::Empty => Held::Empty,
+        }
+    }
+}
+
+impl Held {
+    /// Whether `leaf` measures exactly as the leaf this was taken from did.
+    pub(crate) fn is(&self, leaf: &Leaf<'_>) -> bool {
+        match (self, leaf) {
+            (Held::Text { text, style }, Leaf::Text { text: t, style: s }) => {
+                text == *t && style == *s
+            }
+            (Held::Field { view, field }, Leaf::Field { view: v, field: f }) => {
+                view == *v && field == *f
+            }
+            (Held::Image(a), Leaf::Image(b)) => a == b,
+            (Held::Empty, Leaf::Empty) => true,
+            (Held::Text { .. }, Leaf::Field { .. } | Leaf::Image(_) | Leaf::Empty)
+            | (Held::Field { .. }, Leaf::Text { .. } | Leaf::Image(_) | Leaf::Empty)
+            | (Held::Image(_), Leaf::Text { .. } | Leaf::Field { .. } | Leaf::Empty)
+            | (Held::Empty, Leaf::Text { .. } | Leaf::Field { .. } | Leaf::Image(_)) => false,
+        }
+    }
+}
+
 pub(crate) fn kind<Msg>(node: &Node<Msg>) -> Kind<'_, Msg> {
     match node {
         Node::Stack { children, .. } | Node::Panel { children, .. } => Kind::Container(children),

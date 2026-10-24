@@ -10,7 +10,7 @@
 //! What this file adds to a node's own taffy style is only kit policy: the role a node plays (root fills the viewport
 //! and pads by the safe area, a wrapper's child fills it, a world box floats), anchors, the anchors container that
 //! stretches, and the scroll host (its child never shrinks, its overflow scrolls).
-use crate::kind::{Detached, Kind, Leaf, Room, Tail, check_cells, detached, kind};
+use crate::kind::{Detached, Held, Kind, Leaf, Room, Tail, check_cells, detached, kind};
 use kit_core::kurbo::{Insets, Point, Rect, Size, Vec2};
 use kit_core::{Axis, Viewport};
 use kit_view::taffy as tf;
@@ -110,10 +110,25 @@ pub(crate) const OVERLAY_DEFAULT: Anchor = Anchor {
 };
 
 /// The kit's layout (there is no other: the `LayoutEngine` seam was removed with the mirror style types). Keeps its
-/// taffy tree allocation between frames (the tree is cleared and rebuilt each frame; per-node results are not reused
-/// because the `Node` tree is new every frame anyway).
+/// taffy tree between frames. The `Node` tree is new every frame, so each call first works out the taffy tree it
+/// wants (one `Entry` per laid node), then makes the kept tree match it: see [`Kept::reconcile`]. A frame that asks
+/// for the tree the last frame left costs no taffy work at all (taffy's own caches answer); a frame that changes a
+/// style or a leaf re-solves only the nodes above the change.
 pub struct TaffyLayout {
     tree: tf::TaffyTree<usize>,
+    kept: Kept,
+    reuse: Reuse,
+}
+
+/// What the last `layout` call did to the kept taffy tree. For tests and benches: nothing in layout depends on it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Reuse {
+    /// The tree was cleared and every node created again: first frame, a different shape (a node added, removed or
+    /// moved), or a different text system.
+    Rebuilt { nodes: usize },
+    /// Same shape: only the `styles` that differ were replaced and only the `leaves` whose measure input differs were
+    /// marked dirty. `Patched { styles: 0, leaves: 0 }` is a frame that changed nothing taffy can see.
+    Patched { styles: usize, leaves: usize },
 }
 
 impl Default for TaffyLayout {
@@ -127,7 +142,19 @@ impl TaffyLayout {
         let mut tree = tf::TaffyTree::new();
         // Rounding would snap a measured text width down and make `assemble`'s re-layout wrap differently.
         tree.disable_rounding();
-        Self { tree }
+        Self {
+            tree,
+            kept: Kept {
+                text: 0,
+                nodes: Vec::new(),
+            },
+            reuse: Reuse::Rebuilt { nodes: 0 },
+        }
+    }
+
+    /// What the last `layout` call did to the kept tree.
+    pub fn last_reuse(&self) -> Reuse {
+        self.reuse
     }
 }
 
@@ -141,18 +168,22 @@ impl TaffyLayout {
         world: &dyn WorldProjector,
     ) -> Result<LaidOut<Msg>, LayoutError> {
         check_cells(&root)?;
-        self.tree.clear();
         let placed = {
             let mut frame = Frame {
-                tree: &mut self.tree,
                 viewport,
                 world,
-                leaves: Vec::new(),
+                plan: Vec::with_capacity(root.count()),
                 slots: Vec::with_capacity(root.count()),
                 floating: Vec::new(),
             };
-            let main = frame.build(&root, Role::Root, true);
-            frame.solve(main, text)
+            let main = frame.build(&root, Role::Root, true, Hang::Top);
+            let (reuse, mut leaves) = self.kept.reconcile(
+                &mut self.tree,
+                text.instance(),
+                std::mem::take(&mut frame.plan),
+            );
+            self.reuse = reuse;
+            frame.solve(&mut self.tree, &self.kept, main, &mut leaves, text)
         };
         let mut laid = LaidOut::assemble(root, viewport, &placed, text)?;
         crate::portals::settle(&mut laid)?;
@@ -186,7 +217,8 @@ enum Slot {
     /// A wrapper over / the `World` node itself: shares the rect of the floating child that follows it.
     Follow,
     Laid {
-        id: tf::NodeId,
+        /// Index into the frame's plan (and into `Kept::nodes`).
+        entry: usize,
         link: Link,
     },
 }
@@ -238,14 +270,147 @@ fn resolve(placement: &Placement, host: HostKind) -> Resolved {
 }
 
 struct Frame<'a, 'n> {
-    tree: &'a mut tf::TaffyTree<usize>,
     viewport: Viewport,
     world: &'a dyn WorldProjector,
-    /// Measure contexts: taffy nodes carry an index into this.
-    leaves: Vec<Measured<'n>>,
+    /// The taffy tree this frame wants, in pre-order; handed to `Kept::reconcile` once built.
+    plan: Vec<Entry<'n>>,
     slots: Vec<Slot>,
-    /// Roots of detached world trees, laid out after the main tree.
-    floating: Vec<tf::NodeId>,
+    /// Plan indices of the roots of detached world trees, laid out after the main tree.
+    floating: Vec<usize>,
+}
+
+/// Where a plan entry hangs in the taffy tree.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Hang {
+    /// A tree root: the main tree's, or a detached world or portal box's.
+    Top,
+    /// The next child of the plan entry at this index (children are planned in order).
+    Under(usize),
+}
+
+/// One taffy node as this frame wants it. Pure data: nothing has touched the taffy tree yet.
+struct Entry<'n> {
+    style: tf::Style,
+    hang: Hang,
+    /// What gives the node an intrinsic size. A container is `Leaf::Empty`: taffy never measures a node with
+    /// children, and a childless container measures to nothing, as `Empty` does.
+    leaf: Leaf<'n>,
+}
+
+/// The taffy tree the previous `layout` call left: one node per plan entry, in plan order.
+struct Kept {
+    /// `CosmicText::instance` that measured the leaves. Zero when nothing is kept.
+    text: u64,
+    nodes: Vec<KeptNode>,
+}
+
+struct KeptNode {
+    id: tf::NodeId,
+    hang: Hang,
+    /// What the node was last measured with; the taffy node's context is its index in `nodes`.
+    held: Held,
+}
+
+/// Whether the kept tree has the plan's shape (and measures with the same text system).
+enum Shape {
+    Same,
+    Changed,
+}
+
+impl Kept {
+    /// Makes `tree` hold exactly the plan, doing as little as the difference allows. Returns what it did and the
+    /// per-frame measure state of each leaf (index = the node's context).
+    fn reconcile<'n>(
+        &mut self,
+        tree: &mut tf::TaffyTree<usize>,
+        text: u64,
+        plan: Vec<Entry<'n>>,
+    ) -> (Reuse, Vec<Measured<'n>>) {
+        match self.shape(text, &plan) {
+            Shape::Same => self.patch(tree, plan),
+            Shape::Changed => self.rebuild(tree, text, plan),
+        }
+    }
+
+    fn shape(&self, text: u64, plan: &[Entry<'_>]) -> Shape {
+        let same = self.text == text
+            && self.nodes.len() == plan.len()
+            && self
+                .nodes
+                .iter()
+                .zip(plan)
+                .all(|(kept, wanted)| kept.hang == wanted.hang);
+        if same { Shape::Same } else { Shape::Changed }
+    }
+
+    fn rebuild<'n>(
+        &mut self,
+        tree: &mut tf::TaffyTree<usize>,
+        text: u64,
+        plan: Vec<Entry<'n>>,
+    ) -> (Reuse, Vec<Measured<'n>>) {
+        tree.clear();
+        self.text = text;
+        self.nodes.clear();
+        let count = plan.len();
+        let mut leaves = Vec::with_capacity(count);
+        for (index, entry) in plan.into_iter().enumerate() {
+            let held = entry.leaf.hold();
+            let id = tree
+                .new_leaf_with_context(entry.style, index)
+                .expect("taffy new_leaf is infallible");
+            entry.hang.attach(tree, &self.nodes, id);
+            self.nodes.push(KeptNode {
+                id,
+                hang: entry.hang,
+                held,
+            });
+            leaves.push(Measured::new(entry.leaf));
+        }
+        (Reuse::Rebuilt { nodes: count }, leaves)
+    }
+
+    fn patch<'n>(
+        &mut self,
+        tree: &mut tf::TaffyTree<usize>,
+        plan: Vec<Entry<'n>>,
+    ) -> (Reuse, Vec<Measured<'n>>) {
+        let (mut styles, mut changed) = (0, 0);
+        let mut leaves = Vec::with_capacity(plan.len());
+        for (entry, kept) in plan.into_iter().zip(&mut self.nodes) {
+            let differs = tree.style(kept.id).expect("kept node is live") != &entry.style;
+            if differs {
+                tree.set_style(kept.id, entry.style)
+                    .expect("kept node is live");
+                styles += 1;
+            }
+            if !kept.held.is(&entry.leaf) {
+                kept.held = entry.leaf.hold();
+                tree.mark_dirty(kept.id).expect("kept node is live");
+                changed += 1;
+            }
+            leaves.push(Measured::new(entry.leaf));
+        }
+        (
+            Reuse::Patched {
+                styles,
+                leaves: changed,
+            },
+            leaves,
+        )
+    }
+}
+
+impl Hang {
+    /// Adds `id` (the plan entry just created, whose parent is already in `nodes`) under its parent.
+    fn attach(self, tree: &mut tf::TaffyTree<usize>, nodes: &[KeptNode], id: tf::NodeId) {
+        match self {
+            Hang::Top => {}
+            Hang::Under(parent) => tree
+                .add_child(nodes[parent].id, id)
+                .expect("taffy add_child on live nodes"),
+        }
+    }
 }
 
 /// A leaf and every answer it has given this frame. Taffy asks the same leaf the same question many times per solve
@@ -258,7 +423,14 @@ struct Measured<'n> {
     answers: Vec<(Room, Size)>,
 }
 
-impl Measured<'_> {
+impl<'n> Measured<'n> {
+    fn new(leaf: Leaf<'n>) -> Self {
+        Self {
+            leaf,
+            answers: Vec::new(),
+        }
+    }
+
     fn measure(&mut self, text: &mut CosmicText, room: Room) -> Size {
         let room = self.leaf.canonical(room);
         match self.answers.iter().find(|(asked, _)| *asked == room) {
@@ -272,42 +444,21 @@ impl Measured<'_> {
     }
 }
 
-/// Built node: either part of its parent's taffy tree or a detached world box.
+/// Built node: either part of its parent's taffy tree (at this plan index) or a detached world box.
 enum Built {
-    InTree(tf::NodeId),
+    InTree(usize),
     Detached,
 }
 
 impl<'n> Frame<'_, 'n> {
-    fn leaf_node(&mut self, style: tf::Style, leaf: Leaf<'n>) -> tf::NodeId {
-        let index = self.leaves.len();
-        self.leaves.push(Measured {
-            leaf,
-            answers: Vec::new(),
-        });
-        self.tree
-            .new_leaf_with_context(style, index)
-            .expect("taffy new_leaf is infallible")
+    /// Plans a node and returns its index.
+    fn plan_node(&mut self, style: tf::Style, hang: Hang, leaf: Leaf<'n>) -> usize {
+        self.plan.push(Entry { style, hang, leaf });
+        self.plan.len() - 1
     }
 
-    fn plain_node(&mut self, style: tf::Style) -> tf::NodeId {
-        self.tree
-            .new_leaf(style)
-            .expect("taffy new_leaf is infallible")
-    }
-
-    fn adopt(&mut self, parent: tf::NodeId, child: Built) {
-        match child {
-            Built::InTree(id) => self
-                .tree
-                .add_child(parent, id)
-                .expect("taffy add_child on live nodes"),
-            Built::Detached => {}
-        }
-    }
-
-    fn push_laid(&mut self, id: tf::NodeId, link: Link) -> usize {
-        self.slots.push(Slot::Laid { id, link });
+    fn push_laid(&mut self, entry: usize, link: Link) -> usize {
+        self.slots.push(Slot::Laid { entry, link });
         self.slots.len() - 1
     }
 
@@ -318,7 +469,13 @@ impl<'n> Frame<'_, 'n> {
     }
 
     /// Pre-order build of `node`. `root_content` is true along the root's wrapper chain down to its real container.
-    fn build<Msg>(&mut self, node: &'n Node<Msg>, role: Role, root_content: bool) -> Built {
+    fn build<Msg>(
+        &mut self,
+        node: &'n Node<Msg>,
+        role: Role,
+        root_content: bool,
+        hang: Hang,
+    ) -> Built {
         if let Some(chain) = detached(node) {
             return self.build_detached(node, chain);
         }
@@ -336,48 +493,50 @@ impl<'n> Frame<'_, 'n> {
                     ..tf::Style::DEFAULT
                 };
                 let (t, link) = self.placed(column, style, role);
-                let id = self.plain_node(t);
-                let at = self.push_laid(id, link);
-                let built = self.build(child, Role::Fill { parent: at }, root_content);
-                self.adopt(id, built);
-                Built::InTree(id)
+                let entry = self.plan_node(t, hang, Leaf::Empty);
+                let at = self.push_laid(entry, link);
+                self.build(
+                    child,
+                    Role::Fill { parent: at },
+                    root_content,
+                    Hang::Under(entry),
+                );
+                Built::InTree(entry)
             }
             Kind::Leaf(leaf) => {
                 let (t, link) = self.placed(container_half(&style.layout), style, role);
-                let id = self.leaf_node(t, leaf);
-                self.push_laid(id, link);
-                Built::InTree(id)
+                let entry = self.plan_node(t, hang, leaf);
+                self.push_laid(entry, link);
+                Built::InTree(entry)
             }
             Kind::Container(children) => {
                 let inner = self.padded(container_half(&style.layout), safe);
                 let (t, link) = self.placed(inner, style, role);
                 let (t, host_kind) = arrange(t, &style.content, role);
-                let id = self.plain_node(t);
-                let at = self.push_laid(id, link);
+                let entry = self.plan_node(t, hang, Leaf::Empty);
+                let at = self.push_laid(entry, link);
                 let host = Host {
                     kind: host_kind,
                     entry: at,
                     safe,
                 };
                 for child in children {
-                    let built = self.build(child, Role::In(host), false);
-                    self.adopt(id, built);
+                    self.build(child, Role::In(host), false, Hang::Under(entry));
                 }
-                Built::InTree(id)
+                Built::InTree(entry)
             }
             Kind::Scroll { axis, child } => {
                 let inner = self.padded(scrolling(container_half(&style.layout), axis), safe);
                 let (t, link) = self.placed(inner, style, role);
-                let id = self.plain_node(t);
-                let at = self.push_laid(id, link);
+                let entry = self.plan_node(t, hang, Leaf::Empty);
+                let at = self.push_laid(entry, link);
                 let host = Host {
                     kind: HostKind::Scroll,
                     entry: at,
                     safe: Insets::ZERO,
                 };
-                let built = self.build(child, Role::In(host), false);
-                self.adopt(id, built);
-                Built::InTree(id)
+                self.build(child, Role::In(host), false, Hang::Under(entry));
+                Built::InTree(entry)
             }
             // Reached only when the early chain check above did not fire, which a bare `World`/`Portal` always does.
             Kind::World { anchor, child } => self.build_detached(
@@ -413,8 +572,8 @@ impl<'n> Frame<'_, 'n> {
                 for _ in 0..chain.links {
                     self.slots.push(Slot::Follow);
                 }
-                if let Built::InTree(id) = self.build(chain.child, role, false) {
-                    self.floating.push(id);
+                if let Built::InTree(entry) = self.build(chain.child, role, false, Hang::Top) {
+                    self.floating.push(entry);
                 }
             }
         }
@@ -528,8 +687,14 @@ impl<'n> Frame<'_, 'n> {
     // -----------------------------------------------------------------------------------------------------------
     // Solve
 
-    fn solve(&mut self, main: Built, text: &mut CosmicText) -> Vec<Placed> {
-        let leaves = &mut self.leaves;
+    fn solve(
+        &self,
+        tree: &mut tf::TaffyTree<usize>,
+        kept: &Kept,
+        main: Built,
+        leaves: &mut [Measured<'_>],
+        text: &mut CosmicText,
+    ) -> Vec<Placed> {
         let mut measure = |input: tf::LayoutInput,
                            _id: tf::NodeId,
                            ctx: Option<&mut usize>,
@@ -539,9 +704,9 @@ impl<'n> Frame<'_, 'n> {
                 input,
                 style,
                 |_, _| 0.0,
-                |known, avail| match ctx {
-                    None => known.unwrap_or(tf::Size::ZERO),
-                    Some(index) => measure_leaf(&mut leaves[*index], text, known, avail),
+                |known, avail| {
+                    let index = ctx.expect("every kit node is created with its plan index");
+                    measure_leaf(&mut leaves[*index], text, known, avail)
                 },
             )
         };
@@ -550,9 +715,8 @@ impl<'n> Frame<'_, 'n> {
             height: tf::AvailableSpace::Definite(self.viewport.size.height as f32),
         };
         match main {
-            Built::InTree(root) => self
-                .tree
-                .compute_layout_with_measure(root, viewport_space, &mut measure)
+            Built::InTree(root) => tree
+                .compute_layout_with_measure(kept.nodes[root].id, viewport_space, &mut measure)
                 .expect("taffy layout on a live tree"),
             // The root itself is a world box: there is no main tree, only floating ones.
             Built::Detached => {}
@@ -561,15 +725,14 @@ impl<'n> Frame<'_, 'n> {
             width: tf::AvailableSpace::MaxContent,
             height: tf::AvailableSpace::MaxContent,
         };
-        for id in &self.floating {
-            self.tree
-                .compute_layout_with_measure(*id, floating_space, &mut measure)
+        for root in &self.floating {
+            tree.compute_layout_with_measure(kept.nodes[*root].id, floating_space, &mut measure)
                 .expect("taffy layout on a live tree");
         }
-        self.collect()
+        self.collect(tree, kept)
     }
 
-    fn collect(&self) -> Vec<Placed> {
+    fn collect(&self, tree: &tf::TaffyTree<usize>, kept: &Kept) -> Vec<Placed> {
         let mut placed: Vec<Placed> = Vec::with_capacity(self.slots.len());
         for slot in &self.slots {
             let here = match slot {
@@ -582,8 +745,10 @@ impl<'n> Frame<'_, 'n> {
                     rect: Rect::ZERO,
                     shown: Shown::Visible,
                 },
-                Slot::Laid { id, link } => {
-                    let layout = self.tree.layout(*id).expect("laid slot is a live node");
+                Slot::Laid { entry, link } => {
+                    let layout = tree
+                        .layout(kept.nodes[*entry].id)
+                        .expect("laid slot is a live node");
                     let size =
                         Size::new(f64::from(layout.size.width), f64::from(layout.size.height));
                     let at = Point::new(f64::from(layout.location.x), f64::from(layout.location.y));

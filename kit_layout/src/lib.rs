@@ -14,4 +14,4 @@ mod kind;
 mod portals;
 mod taffy_engine;
 
-pub use taffy_engine::{TaffyLayout, place_anchored};
+pub use taffy_engine::{Reuse, TaffyLayout, place_anchored};
