@@ -47,6 +47,9 @@ pub(crate) enum Leaf<'a> {
 
 /// A [`Leaf`] kept past the frame whose `Node` tree it borrowed from: exactly the inputs its measure reads, owned.
 /// The retained layout compares the next frame's leaf against it to learn whether a measured size is still good.
+/// Whatever `Leaf::measure` reads must be in here: an input missing from `Held` is a size taffy keeps after the content
+/// changed (a stale label width, not a crash). `generated.rs`'s kept-versus-fresh test and `engines.rs`'s `Reuse` test
+/// are what catch one.
 pub(crate) enum Held {
     Text { text: RichText, style: TextStyle },
     Field { view: FieldView, field: FieldStyle },

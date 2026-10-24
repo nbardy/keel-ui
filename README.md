@@ -205,11 +205,14 @@ maturity matter most; choose the kit when you prefer a component tree with data-
   focused control disappears (the next move re-enters at the first/last control), analog-stick dead zones and
   auto-repeat (the host sends one `Move` per step it wants), and arrow-key `Key` events still walk Tab order rather
   than moving spatially unless the host maps them to `Nav`.
-- **Long plain lists are slow; long lists can be virtualised.** A plain `column` lays out every row every frame. On an
-  Apple M4 ([`docs/BENCH.md`](docs/BENCH.md), one run, a list of rows with text and a button), layout takes 2.4 ms per
-  frame at 100 rows, 28 ms at 1,000 and 326 ms at 10,000; egui's whole CPU frame is about 10x cheaper. The game's
-  58-node in-match HUD lays out in about 23 us (layout only, text layouts cached). Why a list row costs so much more
-  per node than the HUD is not yet profiled. `virtual_items` (and `table`, which uses the same core) builds and lays
+- **Long plain lists are slow; long lists can be virtualised.** A plain `column` is walked and laid out every row every
+  frame. `TaffyLayout` keeps its taffy tree between frames, so a list whose rows did not change costs 3.5 to 4.4 us per
+  row (100 rows: 0.36 ms; 1,000 rows: 4.4 ms) and a changed label costs about the same; a list whose shape changed
+  (rows inserted or removed before the end, a different screen) costs 20 to 25 us per row, and the first frame too
+  ([`docs/BENCH.md`](docs/BENCH.md), "Layout keeps its taffy tree", Apple M4, rows of a label, a checkbox and a button;
+  the whole-frame table there predates it, 2.4 ms per frame at 100 rows). A list row is 11 laid nodes and costs about
+  2.2x the HUD's per-node figure because 45% of its nodes are nested flex containers, not because of load; the game's
+  58-node in-match HUD lays out in about 23 us (layout only, text layouts cached). `virtual_items` (and `table`, which uses the same core) builds and lays
   out only the rows in view plus 3 of overscan on each side: its per-frame cost does not grow with the row count (10,000
   rows: about the cost of a 25-row screen, in the BENCH run's same-process comparison). It needs one fixed row height.
   Variable row heights, list-owned keyboard navigation (a focused row that is not built cannot be reached, and nothing

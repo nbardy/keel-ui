@@ -7,6 +7,7 @@
 //!   changed shape, and what every frame cost before the layout kept its taffy tree);
 //! * `steady`: one `TaffyLayout`, the same tree every frame;
 //! * `one edit`: one `TaffyLayout`, one label's text changes every frame.
+//!
 //! `MODE=steady` (and a workload name as the first argument) run just that, for profiling.
 //! It prints node counts by kind, the median and minimum layout time, and time per node and per text leaf. Minimum is
 //! the load-robust one; read both.
