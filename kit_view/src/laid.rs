@@ -4,6 +4,7 @@ use crate::{
     FieldView, FocusClaim, Layer, MaxWidth, Node, Paint, PortalAnchor, Shortcut, TextLayout,
     TextWrap, Tooltip, WorldAnchor, WorldPoint,
 };
+use crate::{Image, ImageStyle};
 use kit_core::kurbo::{Point, Rect, Vec2};
 use kit_core::peniko::Color;
 use kit_core::{Epoch, Key, ShapeSpec, Surface, Viewport, WidgetId};
@@ -70,6 +71,10 @@ pub enum LaidKind<Msg> {
         layout: TextLayout,
         color: Color,
     },
+    Image {
+        image: Image,
+        image_style: ImageStyle,
+    },
     Shape {
         shape: ShapeSpec,
         paint: Paint,
@@ -131,7 +136,10 @@ impl<Msg> LaidNode<Msg> {
             | LaidKind::Layer { child, .. }
             | LaidKind::World { child, .. }
             | LaidKind::Portal { child, .. } => core::slice::from_ref(child),
-            LaidKind::Text { .. } | LaidKind::Shape { .. } | LaidKind::TextField { .. } => &[],
+            LaidKind::Text { .. }
+            | LaidKind::Image { .. }
+            | LaidKind::Shape { .. }
+            | LaidKind::TextField { .. } => &[],
         }
     }
     /// The id of a node that carries one. `None` is the meaning: containers, text and shapes have no identity.
@@ -143,6 +151,7 @@ impl<Msg> LaidNode<Msg> {
             LaidKind::Stack { .. }
             | LaidKind::Panel { .. }
             | LaidKind::Text { .. }
+            | LaidKind::Image { .. }
             | LaidKind::Shape { .. }
             | LaidKind::Layer { .. }
             | LaidKind::World { .. }
@@ -157,7 +166,10 @@ impl<Msg> LaidNode<Msg> {
             | LaidKind::Layer { child, .. }
             | LaidKind::World { child, .. }
             | LaidKind::Portal { child, .. } => core::slice::from_mut(child),
-            LaidKind::Text { .. } | LaidKind::Shape { .. } | LaidKind::TextField { .. } => &mut [],
+            LaidKind::Text { .. }
+            | LaidKind::Image { .. }
+            | LaidKind::Shape { .. }
+            | LaidKind::TextField { .. } => &mut [],
         }
     }
     /// Move this node and everything under it by `by` (a portal is laid out at the origin, then moved to its anchor).
@@ -221,6 +233,7 @@ impl<Msg> LaidNode<Msg> {
             | LaidKind::Stack { .. }
             | LaidKind::Panel { .. }
             | LaidKind::Text { .. }
+            | LaidKind::Image { .. }
             | LaidKind::Shape { .. }
             | LaidKind::Scroll { .. }
             | LaidKind::TextField { .. }
@@ -255,6 +268,7 @@ impl<Msg> LaidNode<Msg> {
                 | LaidKind::Stack { .. }
                 | LaidKind::Panel { .. }
                 | LaidKind::Text { .. }
+                | LaidKind::Image { .. }
                 | LaidKind::Shape { .. }
                 | LaidKind::Scroll { .. }
                 | LaidKind::TextField { .. }
@@ -377,6 +391,9 @@ fn build<Msg>(
                 color: text_style.color,
             }
         }
+        Node::Image {
+            image, image_style, ..
+        } => LaidKind::Image { image, image_style },
         Node::Shape { shape, paint, .. } => LaidKind::Shape { shape, paint },
         Node::Interactive {
             identity,

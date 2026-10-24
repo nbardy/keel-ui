@@ -39,6 +39,7 @@ mod exec;
 mod frame;
 mod geom;
 mod gpu;
+mod image;
 mod plan;
 mod tess;
 
@@ -75,6 +76,7 @@ pub struct WgpuUi {
     gpu: Gpu,
     pipelines: Pipelines,
     atlas: atlas::Atlas,
+    images: image::Images,
     tess: tess::TessCache,
     attachments: Attachments,
     out: Output,
@@ -89,6 +91,7 @@ impl WgpuUi {
         Self {
             pipelines: Pipelines::new(&gpu),
             atlas: atlas::Atlas::new(),
+            images: image::Images::default(),
             tess: tess::TessCache::new(),
             attachments: Attachments::new(),
             out: Output::of(format),
@@ -96,6 +99,31 @@ impl WgpuUi {
             stats: FrameStats::default(),
             gpu,
         }
+    }
+
+    /// Register immutable straight-alpha sRGB RGBA8 pixels; live registration is idempotent.
+    pub fn register_pixels(
+        &mut self,
+        pixels: &kit_view::ImagePixels,
+    ) -> Result<kit_view::Image, RenderError> {
+        self.images.register_pixels(&self.gpu, self.out, pixels)
+    }
+
+    /// Register a game-owned, filterable, single-sample 2D texture view with TEXTURE_BINDING usage.
+    /// `size` is the selected view's mip size. Sampled values must be premultiplied in the target's
+    /// blending space (linear for Srgb targets, encoded for Unorm). Retains the view until release;
+    /// the game may render new contents between UI passes. Do not sample the current UI attachment.
+    pub fn register_texture(
+        &mut self,
+        view: &wgpu::TextureView,
+        size: kit_view::ImageSize,
+    ) -> kit_view::Image {
+        self.images.register_texture(&self.gpu, view, size)
+    }
+
+    /// Release GPU bindings. Recorded command buffers retain their resources; future draws fail.
+    pub fn release(&mut self, image: kit_view::Image) -> Result<(), RenderError> {
+        self.images.release(image)
     }
 
     /// Draw-call statistics of the most recent successful render.
@@ -143,6 +171,7 @@ impl WgpuUi {
         self.generation += 1;
         self.tess.evict(self.generation);
         let plan = Planner::new(PlanEnv {
+            images: &self.images,
             gpu: &self.gpu,
             tess: &mut self.tess,
             atlas: &mut self.atlas,
@@ -185,6 +214,7 @@ impl WgpuUi {
             &Resources {
                 pipelines: &self.pipelines,
                 atlas: &self.atlas,
+                images: &self.images,
                 attachments: &self.attachments,
                 view_bind: &view_bind,
                 buffer: &buffer,

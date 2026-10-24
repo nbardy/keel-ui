@@ -98,6 +98,7 @@ pub fn semantics_scrolled<Msg>(
             | LaidKind::Panel { .. }
             | LaidKind::Interactive { .. }
             | LaidKind::Text { .. }
+            | LaidKind::Image { .. }
             | LaidKind::Shape { .. }
             | LaidKind::TextField { .. }
             | LaidKind::Layer { .. }
@@ -188,6 +189,7 @@ fn semantic_of<Msg>(node: &LaidNode<Msg>) -> Option<Semantic> {
         LaidKind::Stack { .. }
         | LaidKind::Panel { .. }
         | LaidKind::Text { .. }
+        | LaidKind::Image { .. }
         | LaidKind::Shape { .. }
         | LaidKind::Scroll { .. }
         | LaidKind::Layer { .. }

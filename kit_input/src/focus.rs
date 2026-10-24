@@ -32,6 +32,7 @@ pub(crate) fn classify<Msg>(laid: &LaidOut<Msg>, memory: &UiMemory) -> Focused {
                 LaidKind::Stack { .. }
                 | LaidKind::Panel { .. }
                 | LaidKind::Text { .. }
+                | LaidKind::Image { .. }
                 | LaidKind::Shape { .. }
                 | LaidKind::Scroll { .. }
                 | LaidKind::Layer { .. }
@@ -89,6 +90,7 @@ fn collect<Msg>(node: &LaidNode<Msg>, out: &mut Vec<(WidgetId, FocusClaim)>) {
         LaidKind::Stack { .. }
         | LaidKind::Panel { .. }
         | LaidKind::Text { .. }
+        | LaidKind::Image { .. }
         | LaidKind::Shape { .. }
         | LaidKind::Scroll { .. }
         | LaidKind::Layer { .. }

@@ -92,6 +92,7 @@ fn knob(h: &Handle<App, impl Fn(&Cx<'_, App>, &Theme) -> Node<Intent<App>>>) -> 
             }
             | LaidKind::Stack { .. }
             | LaidKind::Panel { .. }
+            | LaidKind::Image { .. }
             | LaidKind::Text { .. }
             | LaidKind::Interactive { .. }
             | LaidKind::Scroll { .. }

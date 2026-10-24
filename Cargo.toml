@@ -11,6 +11,8 @@ members = [
   "kit_raster",
   "kit_state",
   "kit_widgets",
+  "kit_winit",
+  "kit_bench",
 ]
 
 [workspace.package]
@@ -31,6 +33,7 @@ kit_text = { path = "kit_text" }
 kit_wgpu = { path = "kit_wgpu" }
 kit_raster = { path = "kit_raster" }
 kit_widgets = { path = "kit_widgets" }
+kit_winit = { path = "kit_winit" }
 kurbo = "0.13.1"
 peniko = "0.6.1"
 taffy = "0.14.0"

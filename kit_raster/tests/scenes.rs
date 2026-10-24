@@ -23,3 +23,8 @@ fn clipped_scroll() {
 fn drag_ghost() {
     check(Scene::DragGhost);
 }
+
+#[test]
+fn images() {
+    check(Scene::Images);
+}

@@ -11,6 +11,7 @@
 mod convert;
 mod glyph;
 pub mod golden;
+mod image;
 mod layers;
 mod renderer;
 pub mod scene;

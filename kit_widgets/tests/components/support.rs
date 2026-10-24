@@ -209,6 +209,7 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
                 LaidKind::Text { layout, .. } => self.text.buffer(layout.id),
                 LaidKind::Stack { .. }
                 | LaidKind::Panel { .. }
+                | LaidKind::Image { .. }
                 | LaidKind::Shape { .. }
                 | LaidKind::Interactive { .. }
                 | LaidKind::Scroll { .. }

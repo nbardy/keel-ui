@@ -151,6 +151,7 @@ impl<'a, Msg> Field<'a, Msg> {
             LaidKind::Stack { .. }
             | LaidKind::Panel { .. }
             | LaidKind::Text { .. }
+            | LaidKind::Image { .. }
             | LaidKind::Shape { .. }
             | LaidKind::Interactive { .. }
             | LaidKind::Scroll { .. }
@@ -204,6 +205,7 @@ fn locate<'a, Msg>(
             LaidKind::Stack { .. }
             | LaidKind::Panel { .. }
             | LaidKind::Text { .. }
+            | LaidKind::Image { .. }
             | LaidKind::Shape { .. }
             | LaidKind::Interactive { .. }
             | LaidKind::TextField { .. }

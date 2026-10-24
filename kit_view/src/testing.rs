@@ -57,6 +57,7 @@ pub fn control<'a, Msg>(
             | crate::LaidKind::Stack { .. }
             | crate::LaidKind::Panel { .. }
             | crate::LaidKind::Text { .. }
+            | crate::LaidKind::Image { .. }
             | crate::LaidKind::Shape { .. }
             | crate::LaidKind::Scroll { .. }
             | crate::LaidKind::Layer { .. }

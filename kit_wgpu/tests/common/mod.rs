@@ -17,6 +17,10 @@ pub struct Harness {
 
 impl Harness {
     pub fn new(w: u32, h: u32, scale: f32) -> Self {
+        Self::with_format(w, h, scale, FORMAT)
+    }
+
+    pub fn with_format(w: u32, h: u32, scale: f32, format: wgpu::TextureFormat) -> Self {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter =
             pollster::block_on(instance.request_adapter(&Default::default())).expect("GPU adapter");
@@ -32,18 +36,18 @@ impl Harness {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: FORMAT,
+            format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let surface = WgpuSurface {
             view: texture.create_view(&Default::default()),
-            format: FORMAT,
+            format,
             size: (w, h),
             scale_factor: scale,
         };
         Self {
-            ui: WgpuUi::new(device.clone(), queue.clone(), FORMAT),
+            ui: WgpuUi::new(device.clone(), queue.clone(), format),
             device,
             queue,
             texture,

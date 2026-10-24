@@ -25,6 +25,7 @@ wgpu = { version = "30", default-features = false, features = ["wgsl"] }
 wgpu = { version = "30", default-features = false, features = ["webgpu", "wgsl"] }
 
 [dev-dependencies]
+kit_input.workspace = true
 pollster = "0.4"
 # Parity test: the same fixtures drawn by the CPU backend. Dev-only, so the backends still never depend on each other.
 kit_raster.workspace = true

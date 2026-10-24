@@ -1,0 +1,28 @@
+[package]
+name = "kit_bench"
+description = "Keel UI kit whole-frame benchmark (build, layout, paint, GPU record) at 100 / 1k / 10k nodes, with an egui comparison."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "frame_bench"
+path = "src/bin/frame_bench.rs"
+
+[dependencies]
+kit_core.workspace = true
+kit_view.workspace = true
+kit_state.workspace = true
+kit_layout.workspace = true
+kit_paint.workspace = true
+kit_input.workspace = true
+kit_widgets.workspace = true
+kit_wgpu.workspace = true
+wgpu = { workspace = true, features = ["metal", "vulkan", "wgsl"] }
+pollster = "0.4"
+egui = "=0.36.2"

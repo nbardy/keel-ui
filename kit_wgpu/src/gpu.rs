@@ -1,6 +1,6 @@
 //! Device handles, bind-group layouts and the render pipelines.
 pub(crate) const QUAD_FLOATS: usize = 28;
-pub(crate) const TEX_FLOATS: usize = 16;
+pub(crate) const TEX_FLOATS: usize = 20;
 pub(crate) const TESS_FLOATS: usize = 7;
 
 pub(crate) struct Gpu {

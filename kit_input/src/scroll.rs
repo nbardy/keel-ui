@@ -140,6 +140,7 @@ impl Area {
             LaidKind::Stack { .. }
             | LaidKind::Panel { .. }
             | LaidKind::Text { .. }
+            | LaidKind::Image { .. }
             | LaidKind::Shape { .. }
             | LaidKind::Interactive { .. }
             | LaidKind::TextField { .. }

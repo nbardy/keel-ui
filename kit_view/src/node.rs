@@ -3,6 +3,7 @@ use crate::{
     CosmicText, Dismissal, Edit, FieldView, Layer, Masking, MaxWidth, PortalAnchor, RichText,
     Shaped, Style, TextLayout, TextStyle,
 };
+use crate::{Image, ImageStyle};
 use kit_core::kurbo::{self, Point, Size, Vec2};
 use kit_core::peniko::Brush;
 use kit_core::{Identity, Key, Modifiers, ShapeSpec, StableHasher, Surface, WidgetId};
@@ -496,6 +497,11 @@ pub enum Node<Msg> {
         text: RichText,
         text_style: TextStyle,
     },
+    Image {
+        style: Style,
+        image: Image,
+        image_style: ImageStyle,
+    },
     Shape {
         style: Style,
         shape: ShapeSpec,
@@ -551,6 +557,7 @@ impl<Msg> Node<Msg> {
             Node::Stack { style, .. }
             | Node::Panel { style, .. }
             | Node::Text { style, .. }
+            | Node::Image { style, .. }
             | Node::Shape { style, .. }
             | Node::Scroll { style, .. }
             | Node::TextField { style, .. } => style,
@@ -568,7 +575,10 @@ impl<Msg> Node<Msg> {
             | Node::Layer { child, .. }
             | Node::World { child, .. }
             | Node::Portal { child, .. } => core::slice::from_ref(child),
-            Node::Text { .. } | Node::Shape { .. } | Node::TextField { .. } => &[],
+            Node::Image { .. }
+            | Node::Text { .. }
+            | Node::Shape { .. }
+            | Node::TextField { .. } => &[],
         }
     }
     /// Focus this node once per distinct `stamp` ([`FocusClaim`]): a text field opened by a click, the row a
@@ -610,6 +620,7 @@ impl<Msg> Node<Msg> {
             Node::Stack { .. }
             | Node::Panel { .. }
             | Node::Text { .. }
+            | Node::Image { .. }
             | Node::Shape { .. }
             | Node::Scroll { .. }
             | Node::Layer { .. }
@@ -643,6 +654,13 @@ impl<Msg> Node<Msg> {
                 style: new,
                 text,
                 text_style,
+            },
+            Node::Image {
+                image, image_style, ..
+            } => Node::Image {
+                style: new,
+                image,
+                image_style,
             },
             Node::Shape { shape, paint, .. } => Node::Shape {
                 style: new,
@@ -811,6 +829,15 @@ impl<Msg: 'static> Node<Msg> {
                 style,
                 text,
                 text_style,
+            },
+            Node::Image {
+                style,
+                image,
+                image_style,
+            } => Node::Image {
+                style,
+                image,
+                image_style,
             },
             Node::Shape {
                 style,

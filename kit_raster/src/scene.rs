@@ -33,17 +33,19 @@ pub enum Scene {
     NestedLayers,
     ClippedScroll,
     DragGhost,
+    Images,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct UnknownScene(pub String);
 
 impl Scene {
-    pub const ALL: [Scene; 4] = [
+    pub const ALL: [Scene; 5] = [
         Scene::HudBar,
         Scene::NestedLayers,
         Scene::ClippedScroll,
         Scene::DragGhost,
+        Scene::Images,
     ];
     /// Also the golden file stem.
     pub fn name(self) -> &'static str {
@@ -52,6 +54,7 @@ impl Scene {
             Scene::NestedLayers => "nested_layers",
             Scene::ClippedScroll => "clipped_scroll",
             Scene::DragGhost => "drag_ghost",
+            Scene::Images => "images",
         }
     }
     pub fn from_name(name: &str) -> Result<Scene, UnknownScene> {
@@ -66,6 +69,7 @@ impl Scene {
             Scene::NestedLayers => nested_layers(),
             Scene::ClippedScroll => clipped_scroll(),
             Scene::DragGhost => drag_ghost(),
+            Scene::Images => images(),
         }
     }
     pub fn render(self) -> Pixmap {
@@ -76,6 +80,7 @@ impl Scene {
 /// A scene as data: draw it with `RasterUi` or the GPU renderer.
 pub struct Fixture {
     pub list: DrawList,
+    pub pixels: Vec<kit_view::ImagePixels>,
     pub text: CosmicText,
     /// What the scene is drawn over.
     pub backdrop: Color,
@@ -87,6 +92,9 @@ impl Fixture {
     /// The CPU picture.
     pub fn render(&mut self) -> Pixmap {
         let mut ui = RasterUi::new();
+        for pixels in &self.pixels {
+            ui.register_pixels(pixels).expect("fixture pixels");
+        }
         let mut pixmap = Pixmap::new(self.size.0, self.size.1).expect("scene size is non-zero");
         pixmap.fill(crate::convert::color(self.backdrop));
         ui.render(&self.list, &mut self.text, &mut pixmap)
@@ -204,6 +212,7 @@ fn picture(l: Laid, mem: &UiMemory, edit: impl FnOnce(&mut DrawList)) -> Fixture
     edit(&mut list);
     let size = l.laid.viewport.size;
     Fixture {
+        pixels: Vec::new(),
         list,
         text: l.text,
         backdrop: th.colors.surface_inset,
@@ -583,4 +592,62 @@ fn drag_ghost() -> Fixture {
     pointer(&l, &mut mem, 0, Phase::Down, Point::new(108.0, 44.0));
     pointer(&l, &mut mem, 0, Phase::Move, Point::new(200.0, 84.0));
     picture(l, &mem, |_| {})
+}
+
+/// Pixel art, bilinear scaling, containment, tint, rounded corners, clipping and overlapping group opacity.
+fn images() -> Fixture {
+    use kit_view::{Filter, ImagePixels, ImageStyle, image};
+    let pixels = ImagePixels::new(
+        4,
+        2,
+        vec![
+            240, 60, 20, 255, 20, 220, 90, 255, 30, 80, 240, 128, 240, 220, 30, 255, 80, 20, 180,
+            255, 240, 120, 30, 128, 40, 210, 220, 255, 250, 250, 250, 0,
+        ],
+    )
+    .expect("pixels");
+    let handle = pixels.image();
+    let size = Size::new(320.0, 180.0);
+    let nearest = leaf(
+        r(10.0, 10.0, 140.0, 70.0),
+        image(handle, ImageStyle::stretch().filter(Filter::Nearest)),
+    );
+    let smooth = leaf(
+        r(170.0, 10.0, 140.0, 70.0),
+        image(handle, ImageStyle::contain().rounded(12.0)),
+    );
+    let overlap = parent(
+        r(0.0, 0.0, 320.0, 180.0),
+        vec![
+            leaf(
+                r(10.0, 100.0, 150.0, 60.0),
+                image(
+                    handle,
+                    ImageStyle::contain().tint(Color::from_rgba8(150, 210, 255, 180)),
+                ),
+            ),
+            leaf(
+                r(80.0, 120.0, 90.0, 40.0),
+                image(handle, ImageStyle::stretch().filter(Filter::Nearest)),
+            ),
+        ],
+        column,
+    );
+    let clipped = wrap(r(20.0, 95.0, 120.0, 60.0), overlap, |n| Node::Layer {
+        opacity: 0.6,
+        clip: kit_view::ClipSpec::Bounds,
+        child: Box::new(n),
+    });
+    let contained = leaf(
+        r(200.0, 95.0, 90.0, 75.0),
+        image(handle, ImageStyle::contain().filter(Filter::Nearest)),
+    );
+    let root = parent(
+        r(0.0, 0.0, 320.0, 180.0),
+        vec![nearest, smooth, clipped, contained],
+        column,
+    );
+    let mut fx = picture(lay(root, size), &memory(size), |_| {});
+    fx.pixels.push(pixels);
+    fx
 }

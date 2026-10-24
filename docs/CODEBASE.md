@@ -11,6 +11,35 @@ measured the same way on the tree after the DOM UI was deleted: every line of `s
 
 **BUILT** = in the tree when read. **PLANNED** = designed, not in the tree.
 
+## Images (2026-10-24)
+
+`kit_view::image(Image, ImageStyle) -> Node<Msg>` is a leaf, measured intrinsically from its texel size by
+`kit_layout`, then sized by taffy like text or a shape. `Fit::{Stretch, Contain}` computes the painted rect;
+`kit_paint` emits `Draw::Image { image, rect, style }`. The style carries tint, nearest/linear filtering and
+rounded corners. Layout bounds remain the whole node box when Contain letterboxes.
+
+`ImagePixels::new(w, h, rgba)` validates straight-alpha sRGB RGBA8 and mints a process-unique key. Its clones
+share bytes and identity. Each backend owns a registry: `register_pixels(&ImagePixels) -> Result<Image,
+RenderError>` returns the same handle on CPU and GPU. `release(Image) -> Result<(), RenderError>` drops
+resources and keeps a tombstone: released keys cannot be revived. Never-registered and released handles are
+separate typed errors. The frame/render signatures are unchanged.
+
+`WgpuUi::register_texture(&TextureView, ImageSize) -> Image` retains a game texture's bindings, while the game
+may render new content before each UI pass. The caller supplies a filterable single-sample 2D view with
+TEXTURE_BINDING usage and premultiplied samples in the target's blending space. External textures are a
+distinct `ImageSource::Texture`, rejected by CPU with `ExternalTextureOnCpu`. View size is the selected mip's
+size; normal wgpu validation applies to incompatible views/devices and feedback loops.
+
+The GPU pixel registry converts straight RGBA once: encoded premultiplication for Unorm targets, linear
+premultiplication stored as sRGB for Srgb targets. Textured-instance batches include image source/filter,
+rounded coverage and tint; images count as drawing items for opacity grouping and use existing clip sections.
+CPU patterns use premultiplied pixels and tiny-skia rounded paths. Shared image scenes pin a reviewed golden
+and CPU/GPU parity; per-kind draw omission must break parity. GPU readback tests prove same-encoder external
+render-pass updates and translucent pixels on both target encodings.
+
+The tables and slimming notes below retain their dated measurements; their old proposed removal of images
+is superseded by this implemented image path.
+
 ## 1. Crate map
 
 All under `keel/crates/kit/`. No kit crate depends on Keel crates. Dependency direction: `kit_core` <- `kit_view` <-
@@ -25,8 +54,8 @@ except `kit_widgets` which currently depends on `kit_raster` (for tests; see §7
 | `kit_state` | `Cx`, `state`/`derive`, `Ident`/`Life`, `Intent`/`dispatch`, `Store`, `Act`, `Disclosure`/`Presence`/`Easing` | kit_core (kit_view dev only) | new | 1,399 | ~700 | BUILT: state, derive, life, dispatch, presence. PLANNED: `read`, `track`, ledger, preview helpers |
 | `kit_layout` | taffy layout of a `Node` tree into `Placed` rects; `place_anchored`; `check_cells` | kit_core, kit_view, taffy | 1,224 | 1,021 | ~710 | BUILT; `AnchorLayout` deleted (verify), `Style` -> `taffy::Style` PLANNED |
 | `kit_text` | cosmic-text shaping, measurement, glyph rasterisation, font sources | kit_core, kit_view, cosmic-text, swash | 844 | 1,680 | ~400 | BUILT; unchanged so far. Cut `LayoutKey` u8 encoding, mirror `Cursor`/`GlyphRun`/`RasterKey`, dead `hit()` |
-| `kit_paint` | `Node` + layout -> `DrawList` (`Fill`, `Stroke`, `RoundRect`, `Glyphs`, `PushLayer`/`PopLayer`) | kit_core, kit_view, kit_input | 597 | 574 | ~375 | BUILT; drop Image/Custom/Caret draws, nine-slice, `UiRenderer` trait |
-| `kit_wgpu` | Draw a `DrawList` into the host's encoder (SDF quads, lyon paths, glyph atlas) | kit_core, kit_view, kit_paint, lyon, etagere, wgpu | 3,216 + 244 WGSL | 2,365 | ~1,830 + 150 | BUILT; `etagere` dependency present, gradients/images/custom/stencil/blend still present |
+| `kit_paint` | `Node` + layout -> `DrawList` (`Fill`, `Stroke`, `RoundRect`, `Glyphs`, `Caret`, `Image`, `PushLayer`/`PopLayer`) | kit_core, kit_view, kit_input | 597 | 574 | ~375 | BUILT; image and caret draws are live; no Custom/nine-slice/renderer trait |
+| `kit_wgpu` | Draw a `DrawList` into the host's encoder (SDF quads, lyon paths, glyph atlas) | kit_core, kit_view, kit_paint, lyon, etagere, wgpu | 3,216 + 244 WGSL | 2,365 | ~1,830 + 150 | BUILT; glyph atlas and image registries; no gradient/custom/stencil/blend paths |
 | `kit_raster` | tiny-skia reference renderer, `golden` harness, parity scenes. **Dev only** | kit_core, kit_view, kit_paint, kit_input, tiny-skia | 2,111 | 1,514 | ~1,500 (~915 of it test infra) | BUILT |
 | `kit_widgets` | The widgets the game uses: `Ui`, `button`, `card`, `caption`, `panel`, `well`, `space`, `gauge`, `Icon` | kit_core, kit_view, kit_layout, kit_paint, kit_input (+ kit_raster) | 1,963 | 3,953 | ~615 | BUILT; dead widgets (ability/cooldown, slots, tabs/list, tooltip, floats, nine-slice, team) already removed in tree |
 | `kit_anim` | (was tweens/springs) | - | 225 | gone | 0 (~20 easing -> `kit_state`) | Directory removed; `Easing` now in `kit_state` |
@@ -51,7 +80,7 @@ page), `tray.rs` (211), `icons.rs` (395); `keel/hosts/host_web/src/kit_ui.rs` (5
 | View | `Node<Msg>` (plain data, rebuilt per frame, `Node::map`) | kit_view | `Msg = Intent<App>` for screens built on kit_state |
 | Layout | `TaffyLayout::layout(Node, Viewport, text, projector) -> LaidOut` | kit_layout | Concrete, not a trait (PLANNED; the `LayoutEngine` generic still exists at `hud.rs` and `keel_preview/hud_ui.rs`) |
 | Text | `CosmicText` (`buffer(id) -> &Buffer`, `rasterize`) | kit_text | Trait removal PLANNED; `NullText` goes, tests load the bundled Inter subset |
-| Paint | `paint(&LaidOut, &UiMemory, &Theme, Time) -> DrawList` | kit_paint | Six `Draw` kinds are all the game produces |
+| Paint | `paint(&LaidOut, &UiMemory, &Theme, Time) -> DrawList` | kit_paint | Typed draw vocabulary includes images and carets |
 | Render | `WgpuUi::begin_frame(&mut text, viewport) -> UiFrame`; `RasterUi` for CPU | kit_wgpu / kit_raster | `UiFrame` drop is the atlas fence (`frame_submitted()`) |
 | Input | `Router::route(&LaidOut, &mut UiMemory, InputEvent, Time) -> Routing<Msg>` | kit_input | `Handled` / `Captured` / `Passed` |
 | State | `Cx`, `Store`, `dispatch` | kit_state | Renderer-agnostic; never names `Node` |
@@ -137,12 +166,13 @@ forgets" widgets that leave the screen (audit finding 6); the long-term fix is t
 | View tree, router, hit-test, drag/drop, hotkeys | ours | Every framework's router is welded to its widget objects; ours routes over a laid-out data tree |
 | State, life, intents, presence | ours (`kit_state`, ~0.7k) | The part no library models: server-authoritative lives and verdicts |
 | Widgets | ours, only what `hud.rs` uses | Look and behaviour are the product; speculative widgets are deleted |
-| Platform | winit / web-sys in hosts | Not in kit crates |
+| Platform | winit / web-sys in hosts; `kit_winit` (event conversion, IME area, arboard clipboard, `starter` example) is the native one in the kit | Only `kit_winit` names winit; no other kit crate depends on a platform |
 | Accessibility | nobody | Out of scope by owner decision. The semantics extraction and `kit_mirror` remain solely so tests and browser audits can find controls by label |
 
-The `Draw` vocabulary the game actually uses is six kinds: Fill, Stroke, RoundRect (with shadow and border), Glyphs,
-PushLayer/PopLayer (only the drag ghost: opacity 0.8, no clip, normal blend). Gradients, images, custom paint, blend
-modes, stencil and rounded clips, nine-slice and text fields have no production producer and are cut.
+The `Draw` vocabulary is Fill, Stroke, RoundRect (with shadow and border), Glyphs, Caret, Image and
+PushLayer/PopLayer (rect clipping and normal group opacity). Image nodes accept registered app pixels or GPU
+texture views. Gradients and image brushes, custom paint, other blend modes, stencil, rounded layer clips and
+nine-slice are unsupported. Rounded image corners are coverage of the image itself, not a layer clip.
 
 ## 6. Test strategy
 

@@ -16,11 +16,12 @@ use kit_core::kurbo::{Affine, Point, Rect, RoundedRectRadii};
 use kit_core::peniko::{Brush, Color};
 use kit_core::{Border, Clip, Shadow};
 use kit_paint::{Draw, DrawList, RenderError, TOFU_STROKE, caret_bar, em, layout_glyphs, tofu_box};
-use kit_view::{CosmicText, TextLayoutId};
+use kit_view::{CosmicText, Filter, ImageKey, TextLayoutId};
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub(crate) enum Source {
     Glyph(PageId),
+    Image(ImageKey, Filter),
     /// Offscreen group `depth` (1-based), composited source-over.
     Group(usize),
 }
@@ -226,6 +227,7 @@ fn translucent_groups(list: &DrawList) -> Vec<bool> {
             | Draw::Stroke { .. }
             | Draw::RoundRect { .. }
             | Draw::Glyphs { .. }
+            | Draw::Image { .. }
             | Draw::Caret { .. } => {
                 if let Some(top) = open.last_mut() {
                     top.2 += 1;
@@ -349,6 +351,7 @@ pub(crate) struct Plan {
 /// Everything the planner reads from the renderer.
 pub(crate) struct PlanEnv<'a> {
     pub gpu: &'a Gpu,
+    pub images: &'a crate::image::Images,
     pub tess: &'a mut TessCache,
     pub atlas: &'a mut Atlas,
     pub text: &'a mut CosmicText,
@@ -360,6 +363,7 @@ pub(crate) struct PlanEnv<'a> {
 
 pub(crate) struct Planner<'a> {
     gpu: &'a Gpu,
+    images: &'a crate::image::Images,
     tess: &'a mut TessCache,
     atlas: &'a mut Atlas,
     text: &'a mut CosmicText,
@@ -380,6 +384,7 @@ impl<'a> Planner<'a> {
     pub fn new(env: PlanEnv<'a>) -> Self {
         Self {
             gpu: env.gpu,
+            images: env.images,
             tess: env.tess,
             atlas: env.atlas,
             text: env.text,
@@ -430,6 +435,29 @@ impl<'a> Planner<'a> {
         match item {
             Draw::PushLayer { opacity, clip } => self.push_layer(eff * opacity, clip, group),
             Draw::PopLayer => self.pop_layer(),
+            Draw::Image { image, rect, style } => {
+                self.images.get(*image)?;
+                let r = scaled(*rect, self.scale);
+                if m > 0.0 && r.width() > 0.0 && r.height() > 0.0 {
+                    let mut inst = tex_inst(
+                        r,
+                        [0.0, 0.0, 1.0, 1.0],
+                        self.out.premul(style.tint, m),
+                        KIND_PREMUL,
+                    );
+                    let cap = r.width().min(r.height()) / 2.0;
+                    for (dst, radius) in inst[16..20].iter_mut().zip([
+                        style.radii.top_left,
+                        style.radii.top_right,
+                        style.radii.bottom_right,
+                        style.radii.bottom_left,
+                    ]) {
+                        *dst = (radius * self.scale).clamp(0.0, cap) as f32;
+                    }
+                    self.add(Item::Tex(Source::Image(image.key(), style.filter), inst), r);
+                }
+                Ok(())
+            }
             _ if m <= 0.0 => Ok(()),
             Draw::Fill {
                 shape,

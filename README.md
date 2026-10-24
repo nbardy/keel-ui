@@ -92,8 +92,8 @@ list with real clicks, and checks were confirmed to fail when state is keyed by 
 
 **Pick it** for a Rust game or GPU app with your own wgpu loop and a vector-and-text UI (HUD, menus, chat, shops, unit
 panels) that you want to write as declarative components with local state, especially a multiplayer one where the
-server owns the truth. **Wait** if your UI leans on image art (item icons, portraits, textured skins: images are not
-supported yet) or is controller-first (no spatial navigation yet). **Pick something else** for a Bevy game (Bevy UI),
+server owns the truth. Images cover item icons, portraits and game render targets. **Wait** if your UI is
+controller-first (no spatial navigation yet). **Pick something else** for a Bevy game (Bevy UI),
 or for debug panels, inspectors and tools (egui).
 
 ## Status and limits
@@ -104,13 +104,11 @@ or for debug panels, inspectors and tools (egui).
   bundled Inter font keep their own licences ([THIRD_PARTY.md](THIRD_PARTY.md)).
 - **No screen-reader support.** There is a semantics mirror, but it exists for tests and keyboard activation;
   accessibility is out of scope by owner decision.
-- **No images or textures yet.** Shapes, vector icons and text only: an image or gradient brush is a typed
-  `UnsupportedBrush` error, and there is no way to register a game texture (a portrait, a minimap render target). This
-  is the next feature.
 - **No gamepad input or spatial navigation.** Focus moves by Tab order (Up/Down walk it too); a controller-driven
   inventory grid needs the game to map buttons to keys and steer focus itself.
-- **No runnable starter in this repo.** The winit and browser adapters (event conversion, IME textarea, clipboard)
-  live in the game that uses the kit; a standalone native/browser example is planned.
+- **A native starter, no browser starter.** `kit_winit` (winit events, IME, arboard clipboard) and its `starter`
+  example run natively. The browser adapter (canvas events, the hidden IME/clipboard textarea) still lives in the game
+  that uses the kit; a standalone browser example is planned.
 - **Performance is measured for a small HUD only.** The tree is rebuilt every frame, vertex buffers are created per
   render, and each translucent group with two or more items is a full-target offscreen pass. Measure your largest screen.
 - **Fewer widgets than egui,** and no built-in docking, plotting or rich-text editing.
@@ -217,7 +215,35 @@ between two hit-testers.
 semantics and snapshots. The kit's case is the combination, not any single feature: a declarative component tree laid
 out by taffy, local reducers whose events are values, state lifetimes your app defines (and late input refused), and
 input routing that tells the game what the UI did not take (`Handled` / `Captured` / `Passed`). Choose it if you
-prefer that way of writing a game's UI; choose egui for tools, or when you need its widget breadth and images today.
+prefer that way of writing a game's UI; choose egui for tools, or when you need its widget breadth.
+
+## Images and game textures
+
+Decode images in your app, then register straight-alpha, sRGB RGBA8 pixels once per backend:
+
+```rust,ignore
+let pixels = kit_view::ImagePixels::new(width, height, rgba)?;
+let handle = gpu_ui.register_pixels(&pixels)?;
+// Registering the same pixels on RasterUi returns the same handle.
+let portrait = kit_view::image::<Msg>(handle, kit_view::ImageStyle::contain())
+    .size(96.0, 96.0);
+```
+
+`ImageStyle::stretch()` fills the node's taffy box; `contain()` centres the image with its aspect kept.
+Without an explicit size, a node measures one logical pixel per texel. `.tint(color)`, `.rounded(radius)`
+and `.filter(Filter::Nearest)` configure its look (linear filtering is the default). Images respect clip
+layers and group opacity on both backends.
+
+For a minimap or portrait camera, use `gpu_ui.register_texture(&view, ImageSize::new(w, h)?)`.
+The game owns rendering into this view; the kit retains bindings until `release(handle)`. The view must be
+filterable, single-sample 2D with `TEXTURE_BINDING` usage; size names its selected mip's dimensions.
+Sampled RGBA must already be premultiplied in the UI target's blending space: linear for `*Srgb`, encoded
+for Unorm. Record the game pass before the UI pass, using a different attachment from the texture being sampled.
+
+`release(handle)?` frees that backend's resources. Later draws (and re-registration of released pixels)
+return `ImageReleased`; handles never registered on a backend return `ImageNotRegistered`.
+CPU drawing of an external texture returns `ExternalTextureOnCpu`. Register new pixels for a new image;
+image and gradient **brushes** still return `UnsupportedBrush`.
 
 ## How it works
 
@@ -270,10 +296,13 @@ game that uses it, UI included, is 2.16 MB gzipped as wasm.
 | `kit_wgpu` | the GPU backend that records into your encoder (lyon, etagere) |
 | `kit_raster` | CPU backend on tiny-skia for golden and parity tests (dev-only) |
 | `kit_widgets` | the components; short, styled by theme tokens, meant to be copied |
+| `kit_winit` | winit window events to `InputEvent`s, IME area, arboard clipboard; the `starter` example |
 
 ## Try it
 
 ```sh
+cargo run -p kit_winit --example starter      # a window: a scene with the kit UI on top, real input
+cargo run -p kit_winit --example starter -- --snapshot out.png   # no window: a scripted session, one PNG
 cargo test -p kit_widgets --test components   # every component, driven by clicks and keys, plus goldens
 cargo test -p kit_wgpu                        # CPU-vs-GPU per-pixel parity (needs a GPU adapter)
 cargo test --workspace                        # everything

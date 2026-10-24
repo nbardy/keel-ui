@@ -10,6 +10,7 @@ struct Inst {
     @location(1) uv: vec4<f32>, // u0 v0 u1 v1
     @location(2) tint: vec4<f32>,
     @location(3) kind: vec4<f32>,
+    @location(4) radii: vec4<f32>,
 }
 struct Out {
     @builtin(position) pos: vec4<f32>,
@@ -17,6 +18,8 @@ struct Out {
     @location(1) @interpolate(flat) tint: vec4<f32>,
     @location(2) @interpolate(flat) kind: f32,
     @location(3) @interpolate(flat) bounds: vec4<f32>,
+    @location(4) @interpolate(flat) rect: vec4<f32>,
+    @location(5) @interpolate(flat) radii: vec4<f32>,
 }
 
 @vertex
@@ -29,6 +32,8 @@ fn vs(@builtin(vertex_index) vi: u32, i: Inst) -> Out {
     o.tint = i.tint;
     o.kind = i.kind.x;
     o.bounds = i.uv;
+    o.rect = i.rect;
+    o.radii = i.radii;
     return o;
 }
 
@@ -42,5 +47,12 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     let mask = o.tint * s.r;
     let premul = s * o.tint;
     if (o.kind < 0.5) { return mask; }
-    return premul;
+    let p = o.pos.xy - o.rect.xy - o.rect.zw * 0.5;
+    var radius = o.radii.x;
+    if (p.x > 0.0 && p.y <= 0.0) { radius = o.radii.y; }
+    if (p.x > 0.0 && p.y > 0.0) { radius = o.radii.z; }
+    if (p.x <= 0.0 && p.y > 0.0) { radius = o.radii.w; }
+    let q = abs(p) - o.rect.zw * 0.5 + vec2<f32>(radius);
+    let distance = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - radius;
+    return premul * clamp(0.5 - distance, 0.0, 1.0);
 }

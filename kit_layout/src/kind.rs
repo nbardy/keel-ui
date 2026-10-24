@@ -40,6 +40,7 @@ pub(crate) enum Leaf<'a> {
         field: &'a FieldStyle,
     },
     /// `Shape`: sized by style only.
+    Image(Size),
     Empty,
 }
 
@@ -53,6 +54,7 @@ pub(crate) fn kind<Msg>(node: &Node<Msg>) -> Kind<'_, Msg> {
             style: text_style,
         }),
         Node::TextField { view, field, .. } => Kind::Leaf(Leaf::Field { view, field }),
+        Node::Image { image, .. } => Kind::Leaf(Leaf::Image(image.size().logical())),
         Node::Shape { .. } => Kind::Leaf(Leaf::Empty),
         Node::Interactive { child, .. } | Node::Layer { child, .. } => Kind::Wrap(child),
         Node::Scroll { spec, child, .. } => Kind::Scroll {
@@ -212,6 +214,7 @@ impl Leaf<'_> {
                     layout.size.height + 2.0 * field.inset.y,
                 )
             }
+            Leaf::Image(size) => *size,
             Leaf::Empty => Size::ZERO,
         }
     }

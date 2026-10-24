@@ -3,6 +3,7 @@
 //! `LaidOut<Msg>` is what `kit_layout::TaffyLayout` produces and what paint/input consume.
 
 mod builders;
+mod image;
 mod laid;
 mod node;
 mod portal;
@@ -12,6 +13,10 @@ mod semantics;
 mod style;
 
 pub use builders::*;
+pub use image::{
+    Filter, Fit, Image, ImageKey, ImagePixels, ImageSize, ImageSizeError, ImageSource, ImageStyle,
+    PixelsError, image,
+};
 pub use kit_text::{
     Affinity, Align as TextAlign, Applied, Caret, Composition, CosmicText, Cursor, Edit,
     EditorState, FieldGeometry, FieldView, Goal, Masking, MaxWidth, Mode, Motion, Numerals,

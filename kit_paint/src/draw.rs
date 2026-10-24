@@ -1,12 +1,15 @@
 use kit_core::kurbo::{Affine, Point, Rect, RoundedRectRadii, Stroke};
 use kit_core::peniko::Brush;
 use kit_core::{Border, Clip, Shadow, Shape};
-use kit_view::TextLayoutId;
+use kit_view::{Image, ImageStyle, TextLayoutId};
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub enum RenderError {
     /// A gradient or image brush: the game paints solid colours only, so no backend draws anything else.
     UnsupportedBrush,
+    ImageNotRegistered(Image),
+    ImageReleased(Image),
+    ExternalTextureOnCpu(Image),
     /// The list has a `PopLayer` without a `PushLayer`, or a layer left open.
     UnbalancedLayers,
     /// A `Glyphs` names a layout the text system no longer holds (evicted by `end_frame` before drawing).
@@ -17,6 +20,12 @@ pub enum RenderError {
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Draw {
+    /// Image rect is already fitted by the painter; style carries tint, filtering and corner radii.
+    Image {
+        image: Image,
+        rect: Rect,
+        style: ImageStyle,
+    },
     Fill {
         shape: Shape,
         brush: Brush,
@@ -79,6 +88,7 @@ impl DrawList {
                 | Draw::Stroke { .. }
                 | Draw::RoundRect { .. }
                 | Draw::Glyphs { .. }
+                | Draw::Image { .. }
                 | Draw::Caret { .. } => {}
             }
         }
@@ -105,6 +115,7 @@ impl DrawList {
                 | Draw::Stroke { .. }
                 | Draw::RoundRect { .. }
                 | Draw::Glyphs { .. }
+                | Draw::Image { .. }
                 | Draw::Caret { .. } => out.push(outside),
             }
         }

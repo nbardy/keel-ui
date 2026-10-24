@@ -14,6 +14,7 @@ use tiny_skia::{Mask, Pixmap, PixmapPaint, Transform};
 pub struct RasterUi {
     /// Device px per logical px.
     scale: f32,
+    images: crate::image::Images,
 }
 
 impl Default for RasterUi {
@@ -27,7 +28,23 @@ impl RasterUi {
         Self::with_scale(1.0)
     }
     pub fn with_scale(scale: f32) -> Self {
-        Self { scale }
+        Self {
+            scale,
+            images: crate::image::Images::default(),
+        }
+    }
+
+    /// Register immutable straight-alpha sRGB RGBA8 pixels. Repeated live registration is idempotent.
+    pub fn register_pixels(
+        &mut self,
+        pixels: &kit_view::ImagePixels,
+    ) -> Result<kit_view::Image, RenderError> {
+        self.images.register(pixels)
+    }
+
+    /// Release this backend's bytes; this handle remains a tombstone and cannot be registered again.
+    pub fn release(&mut self, image: kit_view::Image) -> Result<(), RenderError> {
+        self.images.release(image)
     }
 
     /// Draws `list` over the existing contents of `target`. All-or-nothing: on `Err` the target is untouched.
@@ -38,6 +55,7 @@ impl RasterUi {
         target: &mut Pixmap,
     ) -> Result<(), RenderError> {
         let mut frame = Frame {
+            images: &self.images,
             scale: self.scale,
             size: (target.width(), target.height()),
             text,
@@ -53,6 +71,7 @@ impl RasterUi {
 }
 
 struct Frame<'a> {
+    images: &'a crate::image::Images,
     scale: f32,
     size: (u32, u32),
     text: &'a mut CosmicText,
@@ -62,6 +81,13 @@ struct Frame<'a> {
 impl Frame<'_> {
     fn draw(&mut self, item: &Draw) -> Result<(), RenderError> {
         match item {
+            Draw::Image { image, rect, style } => crate::image::draw(
+                self.stack.top(),
+                self.images.get(*image)?,
+                *rect,
+                *style,
+                self.scale,
+            ),
             Draw::Fill {
                 shape,
                 brush,

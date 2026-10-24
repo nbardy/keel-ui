@@ -54,6 +54,11 @@ impl<Msg> Painter<'_, Msg> {
                 origin: rect.origin(),
                 brush: Brush::Solid(*color),
             }),
+            LaidKind::Image { image, image_style } => self.out.push(Draw::Image {
+                image: *image,
+                rect: image_style.fit.rect(image.size(), rect),
+                style: *image_style,
+            }),
             LaidKind::Shape { shape, paint } => self.shape(shape, paint, rect),
             LaidKind::Interactive { id, on, child, .. } => {
                 self.node(child, off);

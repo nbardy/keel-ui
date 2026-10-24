@@ -163,6 +163,7 @@ enum Pipe {
 pub(crate) struct Resources<'a> {
     pub pipelines: &'a Pipelines,
     pub atlas: &'a Atlas,
+    pub images: &'a crate::image::Images,
     pub attachments: &'a Attachments,
     pub view_bind: &'a wgpu::BindGroup,
     pub buffer: &'a wgpu::Buffer,
@@ -229,6 +230,7 @@ pub(crate) fn run(
                     count,
                 } => {
                     let bind = match *source {
+                        Source::Image(key, filter) => res.images.bind(key, filter),
                         Source::Glyph(page) => res.atlas.bind_group(page),
                         Source::Group(d) => &res.attachments.groups[d - 1].bind_group,
                     };

@@ -202,6 +202,7 @@ fn collect<'a, Msg>(
         LaidKind::Stack { .. }
         | LaidKind::Panel { .. }
         | LaidKind::Text { .. }
+        | LaidKind::Image { .. }
         | LaidKind::Shape { .. }
         | LaidKind::Interactive { .. }
         | LaidKind::Scroll { .. }

@@ -60,6 +60,7 @@ pub(crate) fn bindings_of<Msg>(node: &LaidNode<Msg>) -> Option<&Bindings<Msg>> {
         LaidKind::Stack { .. }
         | LaidKind::Panel { .. }
         | LaidKind::Text { .. }
+        | LaidKind::Image { .. }
         | LaidKind::Shape { .. }
         | LaidKind::Scroll { .. }
         | LaidKind::TextField { .. }
@@ -81,7 +82,10 @@ fn visit<'a, Msg>(
             children.iter().rev().any(|c| visit(c, memory, point, path))
         }
         // Portals are reached through `Stacking` (layer order), never through the tree that holds them.
-        LaidKind::Text { .. } | LaidKind::Shape { .. } | LaidKind::Portal { .. } => false,
+        LaidKind::Text { .. }
+        | LaidKind::Image { .. }
+        | LaidKind::Shape { .. }
+        | LaidKind::Portal { .. } => false,
         LaidKind::Interactive {
             id,
             on,

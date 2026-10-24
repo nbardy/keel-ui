@@ -31,12 +31,14 @@ enum Kind {
     Glyphs,
     Caret,
     Layer,
+    Image,
 }
 
 /// Exhaustive on purpose: a new `Draw` variant must be given a kind here, and then `ALL_KINDS` makes the coverage
 /// tests demand a scene that uses it.
 fn kind(draw: &Draw) -> Kind {
     match draw {
+        Draw::Image { .. } => Kind::Image,
         Draw::Fill { .. } => Kind::Fill,
         Draw::Stroke { .. } => Kind::Stroke,
         Draw::RoundRect { .. } => Kind::RoundRect,
@@ -46,7 +48,8 @@ fn kind(draw: &Draw) -> Kind {
     }
 }
 
-const ALL_KINDS: [Kind; 6] = [
+const ALL_KINDS: [Kind; 7] = [
+    Kind::Image,
     Kind::Fill,
     Kind::Stroke,
     Kind::RoundRect,
@@ -69,6 +72,9 @@ fn without(list: &DrawList, dropped: Kind) -> DrawList {
 fn gpu_picture(fx: &mut Fixture, list: &DrawList) -> Vec<Px> {
     let (w, h) = fx.size;
     let mut gpu = Harness::new(w, h, 1.0);
+    for pixels in &fx.pixels {
+        gpu.ui.register_pixels(pixels).expect("fixture pixels");
+    }
     let [r, g, b, a] = fx.backdrop.components.map(f64::from);
     gpu.frame(Some([r, g, b, a]), list, &mut fx.text)
         .expect("gpu renders the scene");

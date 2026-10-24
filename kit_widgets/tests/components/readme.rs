@@ -10,7 +10,8 @@ use kit_view::{Role, Toggle};
 use kit_widgets::{Icon, Ink, PathEl};
 
 const COIN: Icon = Icon::new(
-    &[PathEl::Move([4.0, 8.0]), PathEl::Line([12.0, 8.0])],
+    // Icons are drawn on a 32x32 canvas: a horizontal bar across the middle.
+    &[PathEl::Move([8.0, 16.0]), PathEl::Line([24.0, 16.0])],
     Ink::Stroke(1.5),
 );
 
