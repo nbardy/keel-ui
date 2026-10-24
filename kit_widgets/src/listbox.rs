@@ -208,8 +208,11 @@ pub fn listbox<A: Host, K: Ident<A>, I: Clone + Eq + Hash + 'static>(
     unique(p.items);
     let (th, c, s) = (p.theme, &p.theme.colors, p.selection);
     let within = p.items.iter().any(|(id, _)| cx.focused(&(&p.key, id)));
+    // Built once: a `selected.contains` per row scanned the whole selection for every row, which is quadratic over a
+    // large selection. Keep the lookup out of the row closure so it stays one set probe per row.
+    let chosen: HashSet<&I> = s.selected.iter().collect();
     let rows = p.items.iter().map(|(id, label)| {
-        let (key, on, choose) = ((&p.key, id), s.selected.contains(id), p.choose.clone());
+        let (key, on, choose) = ((&p.key, id), chosen.contains(id), p.choose.clone());
         let fill = match (on, cx.hovered(&key)) {
             (true, _) => c.accent,
             (false, true) => c.surface_raised,
