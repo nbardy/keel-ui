@@ -110,10 +110,10 @@ pub(crate) const OVERLAY_DEFAULT: Anchor = Anchor {
 };
 
 /// The kit's layout (there is no other: the `LayoutEngine` seam was removed with the mirror style types). Keeps its
-/// taffy tree between frames. The `Node` tree is new every frame, so each call first works out the taffy tree it
-/// wants (one `Entry` per laid node), then makes the kept tree match it: see [`Kept::reconcile`]. A frame that asks
-/// for the tree the last frame left costs no taffy work at all (taffy's own caches answer); a frame that changes a
-/// style or a leaf re-solves only the nodes above the change.
+/// taffy tree between frames. The `Node` tree is new every frame, so each call walks it in pre-order and, node by node,
+/// makes the kept taffy tree match: a node whose place in the tree, style and measure input are what the kept node
+/// already has costs a comparison and nothing else, and taffy's own caches then answer the solve; the first node
+/// that differs in place cuts the kept tree off there and the rest is created. See [`Sink`].
 pub struct TaffyLayout {
     tree: tf::TaffyTree<usize>,
     kept: Kept,
@@ -121,14 +121,17 @@ pub struct TaffyLayout {
 }
 
 /// What the last `layout` call did to the kept taffy tree. For tests and benches: nothing in layout depends on it.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Reuse {
-    /// The tree was cleared and every node created again: first frame, a different shape (a node added, removed or
-    /// moved), or a different text system.
-    Rebuilt { nodes: usize },
-    /// Same shape: only the `styles` that differ were replaced and only the `leaves` whose measure input differs were
-    /// marked dirty. `Patched { styles: 0, leaves: 0 }` is a frame that changed nothing taffy can see.
-    Patched { styles: usize, leaves: usize },
+/// `Reuse::default()` is a frame that changed nothing taffy can see.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct Reuse {
+    /// Taffy nodes created: everything from the first node whose place in the tree differs from the kept tree's.
+    pub created: usize,
+    /// Kept taffy nodes dropped: the same tail of the kept tree (or all of it, for another text system).
+    pub removed: usize,
+    /// Kept nodes whose style was replaced.
+    pub restyled: usize,
+    /// Kept nodes whose measure input (text, text style, field, image size) changed, so taffy must measure again.
+    pub remeasured: usize,
 }
 
 impl Default for TaffyLayout {
@@ -148,7 +151,7 @@ impl TaffyLayout {
                 text: 0,
                 nodes: Vec::new(),
             },
-            reuse: Reuse::Rebuilt { nodes: 0 },
+            reuse: Reuse::default(),
         }
     }
 
@@ -173,18 +176,26 @@ impl TaffyLayout {
             let mut frame = Frame {
                 viewport,
                 world,
-                plan: Vec::with_capacity(count),
+                sink: Sink::start(&mut self.tree, &mut self.kept, text.instance(), count),
                 slots: Vec::with_capacity(count),
                 floating: Vec::new(),
             };
             let main = frame.build(&root, Role::Root, true, Hang::Top);
-            let (reuse, mut leaves) = self.kept.reconcile(
-                &mut self.tree,
-                text.instance(),
-                std::mem::take(&mut frame.plan),
-            );
+            let Frame {
+                viewport,
+                sink,
+                slots,
+                floating,
+                ..
+            } = frame;
+            let (reuse, mut leaves) = sink.finish();
             self.reuse = reuse;
-            frame.solve(&mut self.tree, &self.kept, main, &mut leaves, text)
+            let solving = Solve {
+                viewport,
+                slots,
+                floating,
+            };
+            solving.solve(&mut self.tree, &self.kept, main, &mut leaves, text)
         };
         let mut laid = LaidOut::assemble(root, viewport, &placed, text)?;
         crate::portals::settle(&mut laid)?;
@@ -218,7 +229,7 @@ enum Slot {
     /// A wrapper over / the `World` node itself: shares the rect of the floating child that follows it.
     Follow,
     Laid {
-        /// Index into the frame's plan (and into `Kept::nodes`).
+        /// Index into `Kept::nodes`: the node's place in pre-order among the laid nodes.
         entry: usize,
         link: Link,
     },
@@ -273,32 +284,23 @@ fn resolve(placement: &Placement, host: HostKind) -> Resolved {
 struct Frame<'a, 'n> {
     viewport: Viewport,
     world: &'a dyn WorldProjector,
-    /// The taffy tree this frame wants, in pre-order; handed to `Kept::reconcile` once built.
-    plan: Vec<Entry<'n>>,
+    /// Makes the kept taffy tree hold each node as it is built.
+    sink: Sink<'a, 'n>,
     slots: Vec<Slot>,
-    /// Plan indices of the roots of detached world trees, laid out after the main tree.
+    /// `Kept::nodes` indices of the roots of detached world trees, laid out after the main tree.
     floating: Vec<usize>,
 }
 
-/// Where a plan entry hangs in the taffy tree.
+/// Where a taffy node hangs in the taffy tree.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Hang {
     /// A tree root: the main tree's, or a detached world or portal box's.
     Top,
-    /// The next child of the plan entry at this index (children are planned in order).
+    /// The next child of the node at this index in `Kept::nodes` (children arrive in order).
     Under(usize),
 }
 
-/// One taffy node as this frame wants it. Pure data: nothing has touched the taffy tree yet.
-struct Entry<'n> {
-    style: tf::Style,
-    hang: Hang,
-    /// What gives the node an intrinsic size. A container is `Leaf::Empty`: taffy never measures a node with
-    /// children, and a childless container measures to nothing, as `Empty` does.
-    leaf: Leaf<'n>,
-}
-
-/// The taffy tree the previous `layout` call left: one node per plan entry, in plan order.
+/// The taffy tree the previous `layout` call left: one node per laid node, in pre-order.
 struct Kept {
     /// `CosmicText::instance` that measured the leaves. Zero when nothing is kept.
     text: u64,
@@ -312,99 +314,116 @@ struct KeptNode {
     held: Held,
 }
 
-/// Whether the kept tree has the plan's shape (and measures with the same text system).
-enum Shape {
-    Same,
-    Changed,
+/// Which side of the first difference a node is on.
+enum Mode {
+    /// Every node so far matched the kept tree's place for it, so the kept node at this index is the one to compare.
+    Patching,
+    /// The kept tree was cut off at the first node that did not fit; everything from there is new.
+    Appending,
 }
 
-impl Kept {
-    /// Makes `tree` hold exactly the plan, doing as little as the difference allows. Returns what it did and the
-    /// per-frame measure state of each leaf (index = the node's context).
-    fn reconcile<'n>(
-        &mut self,
-        tree: &mut tf::TaffyTree<usize>,
+/// Where the frame's nodes go. `node` takes the nodes in pre-order, as the frame builds them, and leaves the kept
+/// taffy tree holding exactly those. Nothing is planned first: an unchanged node costs a style comparison and no
+/// copy (a taffy `Style` is hundreds of bytes, and a plan of them was the largest cost of an unchanged frame).
+struct Sink<'a, 'n> {
+    tree: &'a mut tf::TaffyTree<usize>,
+    kept: &'a mut Kept,
+    mode: Mode,
+    /// Measure state of each node so far (index = the node's context).
+    leaves: Vec<Measured<'n>>,
+    reuse: Reuse,
+}
+
+impl<'a, 'n> Sink<'a, 'n> {
+    fn start(
+        tree: &'a mut tf::TaffyTree<usize>,
+        kept: &'a mut Kept,
         text: u64,
-        plan: Vec<Entry<'n>>,
-    ) -> (Reuse, Vec<Measured<'n>>) {
-        match self.shape(text, &plan) {
-            Shape::Same => self.patch(tree, &plan),
-            Shape::Changed => self.rebuild(tree, text, plan),
+        capacity: usize,
+    ) -> Self {
+        let mut sink = Sink {
+            tree,
+            kept,
+            mode: Mode::Patching,
+            leaves: Vec::with_capacity(capacity),
+            reuse: Reuse::default(),
+        };
+        // Sizes another text system measured are not this one's: keep nothing.
+        if sink.kept.text != text {
+            sink.cut(0);
+            sink.kept.text = text;
         }
+        sink
     }
 
-    fn shape(&self, text: u64, plan: &[Entry<'_>]) -> Shape {
-        let same = self.text == text
-            && self.nodes.len() == plan.len()
-            && self
-                .nodes
-                .iter()
-                .zip(plan)
-                .all(|(kept, wanted)| kept.hang == wanted.hang);
-        if same { Shape::Same } else { Shape::Changed }
-    }
-
-    fn rebuild<'n>(
-        &mut self,
-        tree: &mut tf::TaffyTree<usize>,
-        text: u64,
-        plan: Vec<Entry<'n>>,
-    ) -> (Reuse, Vec<Measured<'n>>) {
-        tree.clear();
-        self.text = text;
-        self.nodes.clear();
-        let count = plan.len();
-        let mut leaves = Vec::with_capacity(count);
-        for (index, entry) in plan.into_iter().enumerate() {
-            let held = entry.leaf.hold();
-            let id = tree
-                .new_leaf_with_context(entry.style, index)
-                .expect("taffy new_leaf is infallible");
-            entry.hang.attach(tree, &self.nodes, id);
-            self.nodes.push(KeptNode {
-                id,
-                hang: entry.hang,
-                held,
-            });
-            leaves.push(Measured::new(entry.leaf));
+    fn node(&mut self, style: tf::Style, hang: Hang, leaf: Leaf<'n>) -> usize {
+        let index = self.leaves.len();
+        match self.mode {
+            Mode::Patching => self.patch(index, style, hang, &leaf),
+            Mode::Appending => self.append(index, style, hang, &leaf),
         }
-        (Reuse::Rebuilt { nodes: count }, leaves)
+        self.leaves.push(Measured::new(leaf));
+        index
     }
 
-    /// Styles are compared in place and cloned only when they differ: an unchanged frame copies no style.
-    fn patch<'n>(
-        &mut self,
-        tree: &mut tf::TaffyTree<usize>,
-        plan: &[Entry<'n>],
-    ) -> (Reuse, Vec<Measured<'n>>) {
-        let (mut styles, mut changed) = (0, 0);
-        let mut leaves = Vec::with_capacity(plan.len());
-        for (entry, kept) in plan.iter().zip(&mut self.nodes) {
-            let differs = tree.style(kept.id).expect("kept node is live") != &entry.style;
-            if differs {
-                tree.set_style(kept.id, entry.style.clone())
-                    .expect("kept node is live");
-                styles += 1;
+    /// The kept node at `index` if it hangs where this one does, else the kept tree ends here and the node is new.
+    fn patch(&mut self, index: usize, style: tf::Style, hang: Hang, leaf: &Leaf<'n>) {
+        match self.kept.nodes.get_mut(index).filter(|k| k.hang == hang) {
+            Some(kept) => {
+                let differs = self.tree.style(kept.id).expect("kept node is live") != &style;
+                if differs {
+                    self.tree
+                        .set_style(kept.id, style)
+                        .expect("kept node is live");
+                    self.reuse.restyled += 1;
+                }
+                if !kept.held.is(leaf) {
+                    kept.held = leaf.hold();
+                    self.tree.mark_dirty(kept.id).expect("kept node is live");
+                    self.reuse.remeasured += 1;
+                }
             }
-            if !kept.held.is(&entry.leaf) {
-                kept.held = entry.leaf.hold();
-                tree.mark_dirty(kept.id).expect("kept node is live");
-                changed += 1;
+            None => {
+                self.cut(index);
+                self.mode = Mode::Appending;
+                self.append(index, style, hang, leaf);
             }
-            leaves.push(Measured::new(entry.leaf));
         }
-        (
-            Reuse::Patched {
-                styles,
-                leaves: changed,
-            },
-            leaves,
-        )
+    }
+
+    fn append(&mut self, index: usize, style: tf::Style, hang: Hang, leaf: &Leaf<'n>) {
+        let id = self
+            .tree
+            .new_leaf_with_context(style, index)
+            .expect("taffy new_leaf is infallible");
+        hang.attach(self.tree, &self.kept.nodes, id);
+        self.kept.nodes.push(KeptNode {
+            id,
+            hang,
+            held: leaf.hold(),
+        });
+        self.reuse.created += 1;
+    }
+
+    /// Drops the kept nodes from `from` on. Each parent of a dropped node precedes it in pre-order, so every kept
+    /// node left still has all its (kept) ancestors, and taffy forgets the dropped ones as children as it removes them.
+    fn cut(&mut self, from: usize) {
+        for dropped in self.kept.nodes.drain(from..) {
+            self.tree.remove(dropped.id).expect("kept node is live");
+            self.reuse.removed += 1;
+        }
+    }
+
+    /// The frame's nodes are all in: whatever is left of an older, longer kept tree goes.
+    fn finish(mut self) -> (Reuse, Vec<Measured<'n>>) {
+        let built = self.leaves.len();
+        self.cut(built);
+        (self.reuse, self.leaves)
     }
 }
 
 impl Hang {
-    /// Adds `id` (the plan entry just created, whose parent is already in `nodes`) under its parent.
+    /// Adds `id` (the node just created, whose parent is already in `nodes`) under its parent.
     fn attach(self, tree: &mut tf::TaffyTree<usize>, nodes: &[KeptNode], id: tf::NodeId) {
         match self {
             Hang::Top => {}
@@ -446,17 +465,16 @@ impl<'n> Measured<'n> {
     }
 }
 
-/// Built node: either part of its parent's taffy tree (at this plan index) or a detached world box.
+/// Built node: either part of its parent's taffy tree (at this index of `Kept::nodes`) or a detached world box.
 enum Built {
     InTree(usize),
     Detached,
 }
 
 impl<'n> Frame<'_, 'n> {
-    /// Plans a node and returns its index.
+    /// Hands a node to the sink and returns its index.
     fn plan_node(&mut self, style: tf::Style, hang: Hang, leaf: Leaf<'n>) -> usize {
-        self.plan.push(Entry { style, hang, leaf });
-        self.plan.len() - 1
+        self.sink.node(style, hang, leaf)
     }
 
     fn push_laid(&mut self, entry: usize, link: Link) -> usize {
@@ -675,7 +693,17 @@ impl<'n> Frame<'_, 'n> {
             bottom: add(p.bottom, safe.y1),
         };
     }
+}
 
+/// What is left of a frame once its nodes are in the kept tree: how to read the solved tree back into rects.
+struct Solve {
+    viewport: Viewport,
+    slots: Vec<Slot>,
+    /// `Kept::nodes` indices of the roots of detached world trees, laid out after the main tree.
+    floating: Vec<usize>,
+}
+
+impl Solve {
     // -----------------------------------------------------------------------------------------------------------
     // Solve
 
@@ -697,7 +725,7 @@ impl<'n> Frame<'_, 'n> {
                 style,
                 |_, _| 0.0,
                 |known, avail| {
-                    let index = ctx.expect("every kit node is created with its plan index");
+                    let index = ctx.expect("every kit node is created with its index");
                     measure_leaf(&mut leaves[*index], text, known, avail)
                 },
             )

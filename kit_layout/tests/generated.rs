@@ -211,7 +211,7 @@ fn always_emit_one_placed_per_node_in_a_consistent_order() {
 fn a_kept_layout_agrees_with_a_fresh_one_after_every_kind_of_change() {
     let mut fonts = text_system();
     let mut kept = TaffyLayout::new();
-    let (mut rebuilt, mut patched) = (0, 0);
+    let (mut cut, mut in_place) = (0, 0);
     for seed in 0..300 {
         // (salt, viewport width, safe-area top): identical, text only, viewport, both; then the next seed reshapes.
         for (salt, width, top) in [
@@ -235,15 +235,15 @@ fn a_kept_layout_agrees_with_a_fresh_one_after_every_kind_of_change() {
                 pre_order(&fresh),
                 "seed {seed} salt {salt} width {width}"
             );
-            match kept.last_reuse() {
-                Reuse::Rebuilt { .. } => rebuilt += 1,
-                Reuse::Patched { .. } => patched += 1,
+            let Reuse {
+                created, removed, ..
+            } = kept.last_reuse();
+            match created + removed {
+                0 => in_place += 1,
+                _ => cut += 1,
             }
         }
     }
-    // Both paths were exercised: trees that were patched in place and trees that were rebuilt.
-    assert!(
-        rebuilt > 0 && patched > 0,
-        "rebuilt {rebuilt} patched {patched}"
-    );
+    // Both paths were exercised: frames the kept tree absorbed in place and frames that cut it and grew it again.
+    assert!(cut > 0 && in_place > 0, "cut {cut} in place {in_place}");
 }
