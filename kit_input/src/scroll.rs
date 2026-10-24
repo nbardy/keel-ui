@@ -323,6 +323,7 @@ impl UiMemory {
                 | Gesture::Backdrop { .. }
                 | Gesture::Drag { .. }
                 | Gesture::Track { .. }
+                | Gesture::Context { .. }
                 | Gesture::Select { .. } => false,
             })
         };
@@ -566,6 +567,7 @@ impl Router {
     /// (`FocusClaim`, keys:), which the fields hear about as `Edit::Focus`/`Blur` on the next routed event.
     pub fn frame<Msg>(&self, laid: &LaidOut<Msg>, memory: &mut UiMemory, now: Time) {
         memory.frame_changed = memory.focus != memory.frame_focus;
+        crate::focus::restore(laid, memory, now);
         crate::focus::claim(laid, memory, now);
         memory.frame_changed |= memory.focus != memory.frame_focus;
         memory.frame_focus = memory.focus;

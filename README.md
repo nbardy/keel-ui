@@ -201,8 +201,14 @@ maturity matter most; choose the kit when you prefer a component tree with data-
   100 rows, 28 ms at 1,000 and 326 ms at 10,000; egui's whole CPU frame is about 10× cheaper. The game's 58-node
   in-match HUD lays out in about 23 µs (layout only, text layouts cached). Why a list row costs so much more per node
   than the HUD is not yet profiled.
-- **Context menus are the host's.** Right-click and long-press are not recognised by the router: the host detects
-  the gesture and opens a menu, and focus is not yet restored when a popup closes.
+- **Context menus: right-click yes, long-press no.** The router recognises a secondary-button click on a control that
+  binds `Bindings::on_context` (it sends the release position and never fires the control's primary action) and gives
+  the `menu` widget a `MenuKind::Context { at, opener }`. A touch long-press is not recognised; the host maps it to
+  the same message. Popups built with `dismissible_from(opener, ..)` (menus and submenus) give focus back to the
+  opener when they close. If the opener is gone, disabled or behind a modal, focus goes to the first focusable
+  control of the current scope and `UiMemory::restore_fallbacks()` counts it. Focus is only restored when it is
+  adrift (unfocused, or on something that left with the popup), so a press that lands on another control keeps it.
+  The menu, combo box and colour picker popups do this; modals do not yet.
 - **A native starter, no browser starter.** `kit_winit` (winit events, IME, arboard clipboard) and its `starter`
   example run natively. The browser adapter (canvas events, the hidden IME/clipboard textarea) still lives in the game
   that uses the kit; a standalone browser example is planned.

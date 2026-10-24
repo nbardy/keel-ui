@@ -1,7 +1,7 @@
 use crate::scroll::ScrollSpec;
 use crate::{
-    CosmicText, Dismissal, Edit, FieldView, Layer, Masking, MaxWidth, PortalAnchor, RichText,
-    Shaped, Style, TextLayout, TextStyle,
+    CosmicText, Dismissal, Edit, FieldView, FocusReturn, Layer, Masking, MaxWidth, PortalAnchor,
+    RichText, Shaped, Style, TextLayout, TextStyle,
 };
 use crate::{Image, ImageStyle};
 use kit_core::kurbo::{self, Point, Size, Vec2};
@@ -264,6 +264,11 @@ pub struct KeySpec<Msg> {
 pub struct PressSpec<Msg> {
     pub on: Rc<dyn Fn(Modifiers) -> Msg>,
 }
+/// A context gesture (secondary-button press and release on the control): the message, built from where it was
+/// released in screen px. Separate from `activate`, which a secondary button never fires.
+pub struct ContextSpec<Msg> {
+    pub on: Rc<dyn Fn(Point) -> Msg>,
+}
 macro_rules! rc_spec {
     ($($spec:ident),*) => {$(
         impl<Msg> Clone for $spec<Msg> {
@@ -278,7 +283,7 @@ macro_rules! rc_spec {
         }
     )*};
 }
-rc_spec!(KeySpec, PressSpec);
+rc_spec!(KeySpec, PressSpec, ContextSpec);
 
 /// Programmatic focus as data on a node. Edge-triggered like a scroll reveal: `Router::frame` focuses the node once
 /// per distinct ticket, so the player can move focus away afterwards. `Nothing` is the meaning of most nodes.
@@ -310,6 +315,8 @@ pub struct Bindings<Msg> {
     pub key: Option<KeySpec<Msg>>,
     /// Builds the activation from the modifiers held; `activate` is then its unmodified message.
     pub press: Option<PressSpec<Msg>>,
+    /// Secondary-button click (press and release on this control). Never fires `activate`.
+    pub context: Option<ContextSpec<Msg>>,
     pub claim: FocusClaim,
 }
 impl<Msg> Default for Bindings<Msg> {
@@ -328,6 +335,7 @@ impl<Msg> Bindings<Msg> {
             pointer: None,
             key: None,
             press: None,
+            context: None,
             claim: FocusClaim::Nothing,
         }
     }
@@ -370,6 +378,13 @@ impl<Msg> Bindings<Msg> {
         self.key = Some(KeySpec { on: Rc::new(on) });
         self
     }
+    /// A secondary-button click on this control sends `on(point)`, the screen position of the release (where a
+    /// context menu opens). It is independent of `activate`: a right-click never fires the primary action, and a
+    /// left-click never fires this. A long-press is not recognised (see the kit_input README section).
+    pub fn on_context(mut self, on: impl Fn(Point) -> Msg + 'static) -> Self {
+        self.context = Some(ContextSpec { on: Rc::new(on) });
+        self
+    }
     /// Focus this control once per distinct `stamp` (see [`FocusClaim`]).
     pub fn claim_focus(mut self, stamp: &impl Hash) -> Self {
         self.claim = FocusClaim::of(stamp);
@@ -381,6 +396,11 @@ impl<Msg> Bindings<Msg> {
             || self.drag.is_some()
             || self.pointer.is_some()
             || self.key.is_some()
+    }
+    /// Tab can land on it: it can be pressed, or it answers a context click (so a menu it opens has an opener focus
+    /// can return to).
+    pub fn is_focusable(&self) -> bool {
+        self.captures_press() || self.context.is_some()
     }
 }
 impl<Msg: Clone> Bindings<Msg> {
@@ -440,6 +460,12 @@ impl<Msg: 'static> Bindings<Msg> {
                 let (inner, f) = (p.on, f.clone());
                 PressSpec {
                     on: Rc::new(move |x| f(inner(x))),
+                }
+            }),
+            context: self.context.map(|c| {
+                let (inner, f) = (c.on, f.clone());
+                ContextSpec {
+                    on: Rc::new(move |at| f(inner(at))),
                 }
             }),
             claim: self.claim,
@@ -546,6 +572,7 @@ pub enum Node<Msg> {
         layer: Layer,
         anchor: PortalAnchor,
         dismissal: Dismissal<Msg>,
+        returns: FocusReturn,
         child: Box<Node<Msg>>,
     },
 }
@@ -727,11 +754,13 @@ impl<Msg> Node<Msg> {
                 layer,
                 anchor,
                 dismissal,
+                returns,
                 child,
             } => Node::Portal {
                 layer,
                 anchor,
                 dismissal,
+                returns,
                 child: Box::new(child.styled(new)),
             },
         }
@@ -911,11 +940,13 @@ impl<Msg: 'static> Node<Msg> {
                 layer,
                 anchor,
                 dismissal,
+                returns,
                 child,
             } => Node::Portal {
                 layer,
                 anchor,
                 dismissal: dismissal.map_rc(f),
+                returns,
                 child: Box::new(child.map_rc(f)),
             },
         }

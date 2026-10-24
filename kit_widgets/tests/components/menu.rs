@@ -1,7 +1,7 @@
 //! Menus: popup hierarchy, disabled actions, keyboard navigation and context placement.
 use crate::support::{Asked, Handle, TestApp};
 use kit_core::kurbo::Point;
-use kit_core::{Key, NamedKey, Theme};
+use kit_core::{Key, NamedKey, Theme, WidgetId};
 use kit_state::{Cx, Ident, Intent, Life};
 use kit_view::{Node, Role, Toggle};
 use kit_widgets::Press;
@@ -18,7 +18,14 @@ fn view(cx: &Cx<'_, TestApp>, theme: &Theme) -> Node<Intent<TestApp>> {
     build(cx, theme, MenuKind::Button)
 }
 fn context(cx: &Cx<'_, TestApp>, theme: &Theme) -> Node<Intent<TestApp>> {
-    build(cx, theme, MenuKind::Context(Point::new(24.0, 24.0)))
+    build(
+        cx,
+        theme,
+        MenuKind::Context {
+            at: Point::new(24.0, 24.0),
+            opener: WidgetId::of(&Id),
+        },
+    )
 }
 fn build(cx: &Cx<'_, TestApp>, theme: &Theme, kind: MenuKind) -> Node<Intent<TestApp>> {
     let action =

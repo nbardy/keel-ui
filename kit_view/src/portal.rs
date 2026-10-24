@@ -65,6 +65,16 @@ impl<Msg: 'static> Dismissal<Msg> {
     }
 }
 
+/// Where keyboard focus goes when a portal closes. Data on the portal, so the router needs no knowledge of which
+/// component opened it.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum FocusReturn {
+    /// Closing says nothing about focus (tooltips, toasts, and popups whose component does not care).
+    Nowhere,
+    /// The control that opened the portal. See `kit_input`'s focus restoration for what happens when it is gone.
+    To(WidgetId),
+}
+
 /// One portal of a laid-out tree, seen from outside.
 pub struct PortalRef<'a, Msg> {
     /// The `LaidKind::Portal` node; its rect is its child's rect.
@@ -73,6 +83,7 @@ pub struct PortalRef<'a, Msg> {
     /// `max(layer, the enclosing portal's effective layer)`: a popup opened from inside a modal paints above the modal.
     pub effective: Layer,
     pub dismissal: &'a Dismissal<Msg>,
+    pub returns: FocusReturn,
     pub child: &'a LaidNode<Msg>,
     /// Index (into [`Stacking::portals`]) of the portal this one is nested in. `Root` is the normal tree.
     pub parent: Parent,
@@ -181,6 +192,7 @@ fn collect<'a, Msg>(
         LaidKind::Portal {
             layer,
             dismissal,
+            returns,
             child,
             ..
         } => {
@@ -190,6 +202,7 @@ fn collect<'a, Msg>(
                 layer: *layer,
                 effective: (*layer).max(enclosing),
                 dismissal,
+                returns: *returns,
                 child,
                 parent,
             });

@@ -76,6 +76,7 @@ fn portal_of(layer: Layer, dismissal: Dismissal<Msg>, content: Part) -> Part {
             layer,
             anchor,
             dismissal,
+            returns: kit_view::FocusReturn::Nowhere,
             child: Box::new(content.node),
         },
         rects,
@@ -96,6 +97,7 @@ fn pointer(phase: Phase, x: f64, y: f64) -> InputEvent {
         phase,
         at: Point::new(x, y),
         pressure: 1.0,
+        button: kit_input::PointerButton::Primary,
     })
 }
 fn key(named: NamedKey, shift: bool) -> InputEvent {

@@ -16,8 +16,8 @@ pub use clipboard::{
     Clipboard, ClipboardError, ClipboardRead, ClipboardRequest, PasteTicket, Serviced, service,
 };
 pub use event::{
-    DeltaUnit, ImeEvent, InputEvent, Key, KeyState, Modifiers, NamedKey, Phase, PointerEvent,
-    PointerId, PointerKind,
+    DeltaUnit, ImeEvent, InputEvent, Key, KeyState, Modifiers, NamedKey, Phase, PointerButton,
+    PointerEvent, PointerId, PointerKind,
 };
 pub use field::{Granularity, Platform, TextTarget, paste_ticket, text_target};
 pub use focus::FocusOutcome;

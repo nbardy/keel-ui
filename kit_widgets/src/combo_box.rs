@@ -12,7 +12,9 @@ use kit_core::{Axis, Border, Shadow, ShapeSpec, Theme, WidgetId};
 use kit_state::{Act, Cx, Host, Ident, Intent};
 use kit_view::taffy::AlignItems;
 use kit_view::{A11y, Bindings, Layer, Node, Paint, PortalAnchor, RevealAlign, Role, ScrollSpec};
-use kit_view::{Side, Style, Toggle, Weight, column, dismissible, interactive, nothing, panel};
+use kit_view::{
+    Side, Style, Toggle, Weight, column, dismissible_from, interactive, nothing, panel,
+};
 use kit_view::{px, scroll_area, shape, stack, text};
 
 /// egui `spacing.combo_height` (the list scrolls beyond it) and `combo_width` (least width), logical px.
@@ -179,5 +181,11 @@ fn options<A: Host, K: Ident<A>>(
         side: Side::Below,
         gap: th.spacing.xs,
     };
-    dismissible(Layer::Popup, anchor, close, panel(body, frame, vec![list]))
+    dismissible_from(
+        WidgetId::of(&p.key),
+        Layer::Popup,
+        anchor,
+        close,
+        panel(body, frame, vec![list]),
+    )
 }

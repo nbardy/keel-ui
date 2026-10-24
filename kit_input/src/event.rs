@@ -21,6 +21,14 @@ pub enum Phase {
     /// Left the window / surface without a button transition.
     Leave,
 }
+/// Which button a pointer press belongs to. Touch and pen contact are `Primary`.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum PointerButton {
+    Primary,
+    /// Right button: the router's context gesture (`Bindings::on_context`).
+    Secondary,
+    Middle,
+}
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct PointerEvent {
     pub id: PointerId,
@@ -29,6 +37,9 @@ pub struct PointerEvent {
     /// Logical px.
     pub at: Point,
     pub pressure: f32,
+    /// Read for `Phase::Down` and `Phase::Up`, where it names the button that changed. `Move`, `Cancel` and `Leave`
+    /// are not about a button; hosts send `Primary` on them and the router ignores it.
+    pub button: PointerButton,
 }
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum DeltaUnit {

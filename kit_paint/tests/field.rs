@@ -38,6 +38,7 @@ fn painted(state: &EditorState, motion: MotionPref, now: Time) -> DrawList {
                 phase,
                 at: Point::new(5.0, 5.0),
                 pressure: 1.0,
+                button: kit_input::PointerButton::Primary,
             }),
             Time::default(),
         );

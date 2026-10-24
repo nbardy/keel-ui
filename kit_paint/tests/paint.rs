@@ -126,6 +126,7 @@ fn drag_ghost_is_painted_balanced_above_the_scene_and_vanishes_with_the_epoch() 
             phase,
             at: Point::new(x, 5.0),
             pressure: 1.0,
+            button: kit_input::PointerButton::Primary,
         };
         router.route(&laid, &mut mem, InputEvent::Pointer(ev), Time::default());
     }

@@ -56,6 +56,7 @@ fn mouse(h: &mut Handle<App, View>, phase: Phase, x: f64, y: f64) {
         phase,
         at: Point::new(x, y),
         pressure: 1.0,
+        button: kit_input::PointerButton::Primary,
     }));
 }
 

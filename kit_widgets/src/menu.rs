@@ -1,7 +1,9 @@
 // Ported from egui 0.36.2 `crates/egui/src/containers/menu.rs` (MIT OR Apache-2.0, (c) Emil Ernerfeldt, Rerun Technologies).
 // Changes: kit state, intents and theme tokens replace egui's Ui/Response/Memory/epaint.
-//! Context menus require a fresh key per host-detected right-click/long-press: the router exposes neither gesture.
-//! Controls use Button semantics; the kit has no menu roles or automatic popup focus restoration.
+//! Context menus open from a control's `Bindings::on_context` (a secondary-button click; the router has no long-press)
+//! and need a fresh key per gesture. Every popup returns focus to the control that opened it when it closes
+//! (`dismissible_from`); a context menu names its opener in `MenuKind::Context`.
+//! Controls use Button semantics; the kit has no menu roles.
 //! Up/Down follow router focus; Right opens its submenu, Left/Escape closes the child, selection closes all.
 use crate::common::{Press, ink, surface};
 use kit_core::kurbo::Point;
@@ -11,8 +13,8 @@ use kit_view::{
     A11y, Anchor, AnchorH, AnchorV, Bindings, Layer, Node, PortalAnchor, Role, SafeArea,
 };
 use kit_view::{
-    Side, Style, Toggle, Weight, column, disabled, dismissible, interactive, nothing, panel, px,
-    text,
+    Side, Style, Toggle, Weight, column, disabled, dismissible_from, interactive, nothing, panel,
+    px, text,
 };
 
 /// Leaves cannot contain submenus: the data model enforces one level.
@@ -27,8 +29,12 @@ pub enum MenuEntry<'a, Msg> {
 #[derive(Copy, Clone)]
 pub enum MenuKind {
     Button,
-    /// Starts open at this viewport position. Use a fresh key for each context gesture.
-    Context(Point),
+    /// Starts open at this viewport position. Use a fresh key for each context gesture. `opener` is the control the
+    /// player right-clicked: focus returns to it when the menu closes.
+    Context {
+        at: Point,
+        opener: WidgetId,
+    },
 }
 pub struct Menu<'a, Msg, K> {
     pub theme: &'a Theme,
@@ -50,7 +56,7 @@ pub fn menu<A: Host, K: Ident<A>>(cx: &Cx<'_, A>, p: Menu<'_, Intent<A>, K>) -> 
     let th = p.theme;
     let initial = match p.kind {
         MenuKind::Button => Open::Closed,
-        MenuKind::Context(_) => Open::Root,
+        MenuKind::Context { .. } => Open::Root,
     };
     let state = cx.state(
         &p.key,
@@ -72,7 +78,7 @@ pub fn menu<A: Host, K: Ident<A>>(cx: &Cx<'_, A>, p: Menu<'_, Intent<A>, K>) -> 
             name(p.label, toggle),
             face(th, p.label, true),
         ),
-        MenuKind::Context(_) => nothing(),
+        MenuKind::Context { .. } => nothing(),
     };
     if *state == Open::Closed {
         return column([button, nothing()]);
@@ -105,6 +111,7 @@ pub fn menu<A: Host, K: Ident<A>>(cx: &Cx<'_, A>, p: Menu<'_, Intent<A>, K>) -> 
                         });
                         popup(
                             th,
+                            WidgetId::of(&id),
                             beside(WidgetId::of(&id), Side::Right),
                             state.send(Open::Root),
                             column(rows),
@@ -115,16 +122,25 @@ pub fn menu<A: Host, K: Ident<A>>(cx: &Cx<'_, A>, p: Menu<'_, Intent<A>, K>) -> 
             }
         }
     });
-    let anchor = match p.kind {
-        MenuKind::Button => beside(WidgetId::of(&p.key), Side::Below),
-        MenuKind::Context(at) => PortalAnchor::Viewport(Anchor {
-            h: AnchorH::Start,
-            v: AnchorV::Start,
-            offset: at.to_vec2(),
-            safe_area: SafeArea::Ignore,
-        }),
+    let (opener, anchor) = match p.kind {
+        MenuKind::Button => (
+            WidgetId::of(&p.key),
+            beside(WidgetId::of(&p.key), Side::Below),
+        ),
+        MenuKind::Context { at, opener } => (
+            opener,
+            PortalAnchor::Viewport(Anchor {
+                h: AnchorH::Start,
+                v: AnchorV::Start,
+                offset: at.to_vec2(),
+                safe_area: SafeArea::Ignore,
+            }),
+        ),
     };
-    column([button, popup(th, anchor, close.clone(), column(rows))])
+    column([
+        button,
+        popup(th, opener, anchor, close.clone(), column(rows)),
+    ])
 }
 fn name(label: &str, toggle: Toggle) -> A11y {
     A11y::Labeled {
@@ -172,13 +188,20 @@ fn leaf<A: Host>(
 fn beside(id: WidgetId, side: Side) -> PortalAnchor {
     PortalAnchor::Node { id, side, gap: 0.0 }
 }
-fn popup<M>(th: &Theme, anchor: PortalAnchor, close: M, body: Node<M>) -> Node<M> {
+fn popup<M>(
+    th: &Theme,
+    opener: WidgetId,
+    anchor: PortalAnchor,
+    close: M,
+    body: Node<M>,
+) -> Node<M> {
     let border = Border::Solid {
         width: 1.0,
         color: th.colors.field_border,
     };
     let frame = surface(th.colors.surface_raised, th.radii.md, border, Shadow::None);
-    dismissible(
+    dismissible_from(
+        opener,
         Layer::Popup,
         anchor,
         close,

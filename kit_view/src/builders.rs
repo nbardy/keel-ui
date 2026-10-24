@@ -2,12 +2,12 @@
 use crate::scroll::ScrollSpec;
 use crate::{
     A11y, AnchorH, AnchorV, Availability, Bindings, ClipSpec, Dismissal, Edit, EditorState,
-    FieldStyle, Layer, Masking, Mode, Node, Paint, PortalAnchor, RichText, Style, TextStyle,
-    TextWrap, Tooltip, WorldAnchor,
+    FieldStyle, FocusReturn, Layer, Masking, Mode, Node, Paint, PortalAnchor, RichText, Style,
+    TextStyle, TextWrap, Tooltip, WorldAnchor,
 };
 use kit_core::kurbo::{RoundedRectRadii, Vec2};
 use kit_core::peniko::Brush;
-use kit_core::{Axis, Identity, ShapeSpec, Surface};
+use kit_core::{Axis, Identity, ShapeSpec, Surface, WidgetId};
 use std::rc::Rc;
 
 /// Children in a column. Anything iterable of things that convert to a node: a `Vec<Node>`, or a mapped iterator of
@@ -214,6 +214,7 @@ pub fn portal<Msg>(layer: Layer, anchor: PortalAnchor, child: Node<Msg>) -> Node
         layer,
         anchor,
         dismissal: Dismissal::Never,
+        returns: FocusReturn::Nowhere,
         child: Box::new(child),
     }
 }
@@ -229,6 +230,24 @@ pub fn dismissible<Msg>(
         layer,
         anchor,
         dismissal: Dismissal::Intent(dismiss),
+        returns: FocusReturn::Nowhere,
+        child: Box::new(child),
+    }
+}
+/// A [`dismissible`] portal opened from the control keyed `opener`: when it closes, focus goes back to that control
+/// (or the documented fallback if the control is gone; see `kit_input::Router::frame`).
+pub fn dismissible_from<Msg>(
+    opener: WidgetId,
+    layer: Layer,
+    anchor: PortalAnchor,
+    dismiss: Msg,
+    child: Node<Msg>,
+) -> Node<Msg> {
+    Node::Portal {
+        layer,
+        anchor,
+        dismissal: Dismissal::Intent(dismiss),
+        returns: FocusReturn::To(opener),
         child: Box::new(child),
     }
 }

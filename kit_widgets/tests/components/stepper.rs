@@ -59,6 +59,7 @@ fn pointer(h: &mut H, phase: Phase, label: &str, ms: u64) {
         phase,
         at: laid_at,
         pressure: 1.0,
+        button: kit_input::PointerButton::Primary,
     }));
 }
 fn value(h: &H) -> i64 {

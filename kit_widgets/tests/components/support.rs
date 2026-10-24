@@ -13,7 +13,7 @@ use kit_core::kurbo::Size;
 use kit_core::peniko::Color;
 use kit_core::{ColorVision, Key, MotionPref, Theme, Time, Viewport};
 use kit_input::{ClipboardRequest, InputEvent, KeyState, Modifiers, Phase, Platform};
-use kit_input::{PointerEvent, PointerId, PointerKind, Router, UiMemory};
+use kit_input::{Focus, PointerButton, PointerEvent, PointerId, PointerKind, Router, UiMemory};
 use kit_layout::TaffyLayout;
 use kit_paint::paint;
 use kit_raster::RasterUi;
@@ -202,6 +202,16 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
 
     /// Press and release at a point (a click on empty space, outside a popup).
     pub fn click_at(&mut self, at: Point) {
+        self.click_button_at(at, PointerButton::Primary);
+    }
+
+    /// Press and release the secondary button at the centre of the control `label` with `role`.
+    pub fn right_click(&mut self, role: Role, label: &str) {
+        let at = self.center(role, label);
+        self.click_button_at(at, PointerButton::Secondary);
+    }
+
+    pub fn click_button_at(&mut self, at: Point, button: PointerButton) {
         self.input_frame([Phase::Down, Phase::Up].map(|phase| {
             InputEvent::Pointer(PointerEvent {
                 id: PointerId(1),
@@ -209,8 +219,18 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
                 phase,
                 at,
                 pressure: 1.0,
+                button,
             })
         }));
+    }
+
+    /// Where keyboard focus is, as the router holds it.
+    pub fn focus(&self) -> Focus {
+        self.memory.focus()
+    }
+    /// Popups that closed and could not give focus back to their opener.
+    pub fn restore_fallbacks(&self) -> u64 {
+        self.memory.restore_fallbacks()
     }
 
     pub fn press_key(&mut self, key: Key) {

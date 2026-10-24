@@ -85,6 +85,7 @@ fn pointer(at: Point, phase: Phase, kind: PointerKind) -> InputEvent {
         phase,
         at,
         pressure: 1.,
+        button: kit_input::PointerButton::Primary,
     })
 }
 

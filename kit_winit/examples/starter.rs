@@ -807,6 +807,7 @@ fn mouse(phase: Phase, at: Point) -> InputEvent {
         phase,
         at,
         pressure: 1.0,
+        button: kit_input::PointerButton::Primary,
     })
 }
 fn click(at: Point) -> Vec<InputEvent> {

@@ -4,6 +4,7 @@ mod checkbox;
 mod collapsing;
 mod color_picker;
 mod combo_box;
+mod context;
 mod drag_value;
 mod lifecycle;
 mod listbox;
