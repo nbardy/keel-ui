@@ -9,6 +9,7 @@ These files port behaviour and maths from [egui](https://github.com/emilk/egui) 
 in its header, and those parts remain under egui's licence:
 
 - `kit_input/src/scroll.rs`
+- `kit_web/src/text.rs` (the hidden-textarea diffing, from egui's eframe `text_agent.rs`)
 - `kit_widgets/src/checkbox.rs`
 - `kit_widgets/src/collapsing.rs`
 - `kit_widgets/src/color_picker.rs`

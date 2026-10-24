@@ -24,7 +24,7 @@ range ring follow the ships in world space. Captured by the game's headless-Chro
 | App data and the commands that change it | Keyed local UI state, with lifetimes your data decides |
 | Assets, decoding, background work | Layout (taffy) and text (cosmic-text) |
 | Device, queue, frame pacing and `queue.submit` | UI drawing recorded into your encoder |
-| Converting platform events (`kit_winit` does it for winit) | Hit-testing, focus, scrolling, text editing |
+| Converting platform events (`kit_winit` does it for winit, `kit_web` for the browser) | Hit-testing, focus, scrolling, text editing |
 | Deciding when to draw | What changed: the UI's own animations, timers and gestures |
 
 A few terms, since they are easy to conflate:
@@ -222,9 +222,15 @@ maturity matter most; choose the kit when you prefer a component tree with data-
   control of the current scope and `UiMemory::restore_fallbacks()` counts it. Focus is only restored when it is
   adrift (unfocused, or on something that left with the popup), so a press that lands on another control keeps it.
   The menu, combo box and colour picker popups do this; modals do not yet.
-- **A native starter, no browser starter.** `kit_winit` (winit events, IME, arboard clipboard) and its `starter`
-  example run natively. The browser adapter (canvas events, the hidden IME/clipboard textarea) still lives in the game
-  that uses the kit; a standalone browser example is planned.
+- **Two starters, one app.** `kit_winit` (winit events, IME, arboard clipboard) runs natively and `kit_web` (DOM
+  events, the hidden IME/clipboard textarea, a WebGPU canvas loop) runs in a browser; both `starter` examples share
+  one app file. The browser host has limits of its own. Input is queued and routed at the next frame, so a browser key
+  cannot tell the page whether the kit took it: unmodified keys the kit names (Tab, Space, arrows, Backspace) are
+  always `preventDefault`ed, and chords stay the browser's. The textarea takes focus one frame after a click, so
+  keys typed in that frame are lost. A canvas moved to a monitor of another pixel density without being resized is
+  redrawn only at the next input. There is no DOM mirror of the controls (the game's `kit_mirror` stays in the game),
+  no long-press, and no cursor icon. Only desktop Chrome has been driven (`kit_web/check_browser.mjs`); iOS Safari and
+  Android keyboards are untested here.
 - **Per-frame costs to know about.** The tree is rebuilt every frame, vertex buffers are created per render, and each
   translucent group with two or more items is a full-target offscreen pass. Measure your largest screen.
 - **Fewer widgets than egui,** and no built-in docking, plotting or rich-text editing.
@@ -445,12 +451,14 @@ game that uses it, UI included, is 2.16 MB gzipped as wasm.
 | `kit_test` | the test driver: `Handle` drives a real view by role and label through the real router, and checks goldens (dev-only, for the kit and for apps) |
 | `kit_widgets` | the components; short, styled by theme tokens, meant to be copied |
 | `kit_winit` | winit window events to `InputEvent`s, IME area, arboard clipboard; the `starter` example |
+| `kit_web` | DOM events to `InputEvent`s, the hidden IME/clipboard textarea, a WebGPU canvas loop that draws only on `Redraw` demand (wasm); the browser `starter` example |
 
 ## Try it
 
 ```sh
 cargo run -p kit_winit --example starter      # a window: a scene with the kit UI on top, real input
 cargo run -p kit_winit --example starter -- --snapshot out.png   # no window: a scripted session, one PNG
+kit_web/build.sh serve                        # the same starter in a browser tab: http://localhost:8080 (needs WebGPU)
 cargo test -p kit_widgets --test components   # every component, driven by clicks and keys, plus goldens
 cargo test -p kit_wgpu                        # CPU-vs-GPU per-pixel parity (needs a GPU adapter)
 cargo test --workspace                        # everything

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<title>Keel kit starter (browser)</title>
+<link rel="icon" href="data:,">
+<style>
+  /* The page is one canvas. The host measures its CSS box every frame and sizes the drawing buffer to it times the
+     device pixel ratio, so all sizing is here. */
+  html, body { margin: 0; height: 100%; background: #180e28; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100dvh; }
+  /* A failure (no WebGPU, a startup or frame error) is text on the dark page: the canvas shows nothing then. */
+  #status, body[data-kit-web-error]::after {
+    position: fixed; left: 16px; top: 16px; right: 16px; max-width: 60ch; color: #f4efdf;
+    font: 15px/1.5 system-ui, sans-serif; white-space: pre-wrap;
+  }
+  body[data-kit-web-error]::after { content: "Stopped: " attr(data-kit-web-error); top: auto; bottom: 16px; color: #ffb4a8; }
+</style>
+</head>
+<body>
+<canvas id="kit" aria-label="Keel kit starter"></canvas>
+<p id="status">Loading...</p>
+<script type="module">
+  import init, { run, probe } from './pkg/starter.js'
+  const status = document.getElementById('status')
+  window.kitProbe = () => JSON.parse(probe())
+  try {
+    if (!navigator.gpu) throw new Error('this browser has no WebGPU (navigator.gpu is missing)')
+    await init()
+    await run()
+    status.remove()
+  } catch (error) {
+    status.textContent = 'Failed to start: ' + error
+    document.body.dataset.kitWebStartError = String(error)
+  }
+</script>
+</body>
+</html>

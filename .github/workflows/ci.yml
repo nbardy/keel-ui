@@ -15,7 +15,9 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
       - name: wasm (WebGPU) builds
-        run: cargo build --locked --target wasm32-unknown-unknown -p kit_wgpu -p kit_widgets -p kit_layout
+        run: cargo build --locked --target wasm32-unknown-unknown -p kit_wgpu -p kit_widgets -p kit_layout -p kit_web
+      - name: wasm browser starter builds
+        run: cargo build --locked --target wasm32-unknown-unknown -p kit_web --example starter
       - name: native builds have no web runtime
         run: |
           for p in $(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(*[p["name"] for p in json.load(sys.stdin)["packages"]])'); do

@@ -13,6 +13,7 @@ members = [
   "kit_widgets",
   "kit_test",
   "kit_winit",
+  "kit_web",
   "kit_bench",
 ]
 
@@ -35,6 +36,7 @@ kit_wgpu = { path = "kit_wgpu" }
 kit_raster = { path = "kit_raster" }
 kit_widgets = { path = "kit_widgets" }
 kit_winit = { path = "kit_winit" }
+kit_web = { path = "kit_web" }
 kit_test = { path = "kit_test" }
 kurbo = "0.13.1"
 peniko = "0.6.1"
