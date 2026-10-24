@@ -21,8 +21,10 @@ mod ident;
 mod input;
 mod intent;
 mod presence;
+mod read;
 mod store;
 mod text;
+mod track;
 
 pub use act::{Act, Fault, Wake};
 pub use cx::{Cx, Reducer, Sender, State, Zoom};
@@ -30,5 +32,7 @@ pub use ident::{Host, Ident, Life, Part};
 pub use input::{Drag, Interaction, Unrouted};
 pub use intent::{Intent, Late, LateWhy, dispatch, wake_due};
 pub use presence::{Disclosure, DisclosureEv, Easing, Phase, Presence, Since};
+pub use read::{Loaded, Resource, sync_reads};
 pub use store::{LATE_LOG, Store};
 pub use text::{Applied, Dir, History, Rev, Selection, TextValue, UNDO_DEPTH};
+pub use track::{Command, Outcome, Settled, Verdict};

@@ -1,4 +1,5 @@
 //! What a reducer returns: asks for the app, counted faults, and at most one wake-up. No other effect channel exists.
+use crate::track::{Command, Sent};
 use core::fmt::Debug;
 use kit_core::Time;
 
@@ -20,6 +21,7 @@ pub enum Wake<Ev> {
 pub struct Act<Ask, Ev> {
     pub(crate) asks: Vec<Ask>,
     pub(crate) faults: Vec<Fault>,
+    pub(crate) sent: Vec<Sent>,
     pub(crate) wake: Wake<Ev>,
 }
 
@@ -28,6 +30,7 @@ impl<Ask, Ev> Act<Ask, Ev> {
         Self {
             asks: Vec::new(),
             faults: Vec::new(),
+            sent: Vec::new(),
             wake: Wake::Keep,
         }
     }
@@ -35,6 +38,14 @@ impl<Ask, Ev> Act<Ask, Ev> {
         Self {
             asks: vec![ask],
             ..Self::none()
+        }
+    }
+    /// An ask whose outcome the UI shows: `cx.track::<C>(key)` reads `Pending` from now, with this reducer's key.
+    /// The host later reports the server's answer with `Store::settle`.
+    pub fn ask_tracked<C: Command>(ask: Ask) -> Self {
+        Self {
+            sent: vec![Sent::of::<C>()],
+            ..Self::ask(ask)
         }
     }
     pub fn fault(why: &'static str) -> Self {
@@ -63,6 +74,7 @@ impl<Ask, Ev> Act<Ask, Ev> {
     pub fn and(mut self, other: Act<Ask, Ev>) -> Self {
         self.asks.extend(other.asks);
         self.faults.extend(other.faults);
+        self.sent.extend(other.sent);
         self.wake = match other.wake {
             Wake::Keep => self.wake,
             wake @ (Wake::At(..) | Wake::Cancel) => wake,

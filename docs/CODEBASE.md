@@ -55,7 +55,7 @@ except the dev-only harness `kit_test` (for apps' and the kit's tests), which de
 | `kit_core` | Ids, `Identity`, `Time`, `Epoch`, `Viewport`, `Theme` tokens, re-export `kurbo`/`peniko` | kurbo, peniko | 576 | 552 | ~545 | BUILT; cut dead theme tokens, merge key hint tables |
 | `kit_view` | `Node<Msg>`, builders, `Screen`, `Style`, `LaidOut`, semantics extraction, test helpers | kit_core | 2,278 | 2,685 | ~1,315 | BUILT; text/style mirror types -> cosmic/taffy; `LayoutEngine`/`Element` traits go |
 | `kit_input` | `InputEvent`, `Router`, `UiMemory` (hover/press/drag/focus/scroll), gestures, hotkeys | kit_core, kit_view | 1,119 | 3,006 | ~965 | BUILT; own caret editor -> `TextValue`/cosmic `Editor`; pointer buttons (primary/secondary/middle), context gesture, popup focus restoration (`focus::restore`); `InputEvent::Nav` + spatial focus moves (`nav.rs`) |
-| `kit_state` | `Cx`, `state`/`derive`, `Ident`/`Life`, `Intent`/`dispatch`, `Store`, `Act`, `Disclosure`/`Presence`/`Easing` | kit_core (kit_view dev only) | new | 1,399 | ~700 | BUILT: state, derive, life, dispatch, presence. PLANNED: `read`, `track`, ledger, preview helpers |
+| `kit_state` | `Cx`, `state`/`derive`/`track`/`read`, `Ident`/`Life`, `Intent`/`dispatch`, `Store`, `Act`, `Disclosure`/`Presence`/`Easing` | kit_core (kit_view dev only) | new | 1,399 | ~700 | BUILT: state, derive, life, dispatch, presence, `track` (`track.rs`: verdict per (command kind, key)), `read` (`read.rs`: subscriptions, `sync_reads`). PLANNED: ledger, preview helpers |
 | `kit_layout` | taffy layout of a `Node` tree into `Placed` rects; `place_anchored`; `check_cells`; keeps the taffy tree between frames (`TaffyLayout::last_reuse`) | kit_core, kit_view, taffy | 1,224 | 1,021 | ~710 | BUILT; `AnchorLayout` deleted (verify), `Style` -> `taffy::Style` PLANNED |
 | `kit_text` | cosmic-text shaping, measurement, glyph rasterisation, font sources | kit_core, kit_view, cosmic-text, swash | 844 | 1,680 | ~400 | BUILT; unchanged so far. Cut `LayoutKey` u8 encoding, mirror `Cursor`/`GlyphRun`/`RasterKey`, dead `hit()` |
 | `kit_paint` | `Node` + layout -> `DrawList` (`Fill`, `Stroke`, `RoundRect`, `Glyphs`, `Caret`, `Image`, `PushLayer`/`PopLayer`) | kit_core, kit_view, kit_input | 597 | 574 | ~375 | BUILT; image and caret draws are live; no Custom/nine-slice/renderer trait |
@@ -140,7 +140,7 @@ Server round trip for one command, as it will look with the ledger (PLANNED part
 3. Server validates, applies or refuses (`OrderRefusal`), publishes. PLANNED P1: a `Mark` (processed-up-to) rides in the
    same body; a refusal is written before any mark covering it.
 4. Client folds the body into the replica. PLANNED: the ledger marks the ask `Confirmed` / `Refused` / `Unknown` /
-   `Withdrawn`; `cx.track` reads it; the preview derives from the ledger's in-doubt suffix.
+   `Withdrawn`; `cx.track` reads it; the preview derives from the ledger's in-doubt suffix. BUILT without the ledger: `Act::ask_tracked` marks the send, `Store::settle` takes the host's verdict, `cx.track` reads it (Pending, Confirmed, Refused(why), Unknown after `Command::WITHIN`, or Unsent).
 5. If the owning key's life ends first: state removed; unsent ask withdrawn (PLANNED); sent ask orphaned until answered.
 
 ## 4. Where state lives: four layers, one writer each
@@ -148,7 +148,7 @@ Server round trip for one command, as it will look with the ledger (PLANNED part
 | Layer | Lives in | Only writer | Read through |
 |---|---|---|---|
 | 1. Server | `game_room::Room`, `game_bships`/`game_bnav`/`game_stations`/`game_deck`, `keel_store` (SQLite) | validated commands; `economy::apply` | the wire; fog is redacted per team (`Audience::Team`) before publish |
-| 2. Replica | `game_client::Client`: room view, sea snapshot with netcode interpolation, station, social, `draft_context`, `me`, `Delivery` | `Client::on_message`, delivery | `cx.app()`; PLANNED `cx.read`, `cx.track` |
+| 2. Replica | `game_client::Client`: room view, sea snapshot with netcode interpolation, station, social, `draft_context`, `me`, `Delivery` | `Client::on_message`, delivery | `cx.app()`, `cx.read` (BUILT: `Resource::state` over the replica), `cx.track` (BUILT, verdicts reported by the host) |
 | 3. Prefs (device) | mute, colour vision, UI scale, keybinds, last seat token; today scattered across `www/audio.js` and localStorage | one `PrefChange` path | derived theme/keymap in the app |
 | 4. UI state | `kit_state::Store` (declared state, keyed, collected by life) for logical state; `kit_input::UiMemory` for presentational hover/press/drag ghost/scroll offset | `dispatch` / the router | `cx.state` handles; paint reads `UiMemory` |
 
@@ -219,7 +219,7 @@ Each step keeps `check.sh` and the kit-hud/versus/inventory URL stages green. St
 | 3 | `etagere` for the atlas | `kit_wgpu/src/atlas.rs` 326 lines to shrink | Done 2026-10-23: `BucketedAtlasAllocator` replaces `Shelf`; fence, LRU, padding kept; new full-page test |
 | 4 | `taffy::Style` on `Node`; drop `LayoutEngine` trait; one percent constructor + test | `kit_layout` 1,224 -> ~710; Style translation 197 -> ~45 | Not started |
 | 5 | cosmic-text types through kit_view / kit_text / backends; delete `NullText` and the `TextSystem` seam; re-baseline goldens on the Inter subset | `kit_text` 844 -> ~400; `kit_view` text.rs/style.rs mirror types gone | Not started |
-| 6 | `kit_state` read/track/ledger; `TextValue` on cosmic `Editor`; **port the plan tray** | microlib ~700 | `state`/`derive`/life/presence BUILT; port not started |
+| 6 | `kit_state` read/track/ledger; `TextValue` on cosmic `Editor`; **port the plan tray** | microlib ~700 | `state`/`derive`/life/presence/`read`/`track` BUILT (no ledger); port not started |
 | 7 | Optional: fold `kit_paint` into `kit_view`; split `LaidNode` into controls and containers (cuts ~8 copies of an 11-arm `LaidKind` match); single `StableHasher` (kit_core and keel_math duplicate it); `kit_widgets` stops depending on `kit_raster` (done 2026-10-24: the harness is the dev-only `kit_test`) | | Done |
 
 Traps that must be handled inside the step, not after:
@@ -244,7 +244,7 @@ Unchanged: the `host_web` `kit_mirror.rs`/`kit_ui.rs` semantics contract; `FontS
   `dom_state.rs`, `actions.rs`; the `?ui=kit` switch; most of `style.css`). BUILT: every screen on the kit. The DOM
   keeps, by design: the "WebGPU required" gate and the crash panel (`ui_runtime.js`; must work after the wasm module
   traps), the connection panel (`transport.rs`; must work while the socket is down), and the semantics mirror.
-- **Server-authority helpers** (`cx.read`, `cx.track`, the ask ledger, previews): PLANNED. The plan tray derives its
+- **Ask ledger and previews:** PLANNED. `cx.read` and `cx.track` are BUILT (no ledger: no `Withdrawn`, no watermark, replies matched to sends by order; see `kit_state/src/track.rs`). The plan tray derives its
   plan from the client (`Client::plan()`: the sent edit until the echo covers it, else the echo), not from a ledger.
 - **Protocol work P1-P5** on the server side; see KEEL_UI_DESIGN.md §9 R2 and R3.
 - **Accessibility** beyond the mirror: out of scope by owner decision.

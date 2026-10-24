@@ -18,6 +18,7 @@ mod readme;
 mod search_field;
 mod segmented;
 mod separator;
+mod server;
 mod slider;
 mod stepper;
 mod switch;

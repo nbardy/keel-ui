@@ -40,7 +40,7 @@ These override FINAL.md. They are listed once, here.
    `(TypeId, data key)`; the closure rides inside the `Intent`.
 3. `cx.derive(&key, |app, key| ...)` follows the same rule and is recomputed every frame. Memoise only where profiling
    demands it.
-4. `cx.read(fetch)` is subscribing/loading; `cx.track::<Ask>(key)` is the server's verdict (both PLANNED).
+4. `cx.read(resource)` is subscribing/loading; `cx.track::<Command>(key)` is the server's verdict (both BUILT 2026-10-25; differences below).
 5. Kept from FINAL: key life, withdraw/abort/refuse-late from that one rule, every command ends with a watermark (P1)
    and stale fence (P3), preview = the server's rule over in-doubt commands (informs, never gates), presence as data.
 6. Deferred: the full event log and timeline, logged demand, the memo engine, the 44-name vocabulary (target about 15).
@@ -180,7 +180,7 @@ enum ComposerEv { Edit(Splice), Submit }
 enum EditEv { Begin, Edit(Splice), Commit, Cancel }
 
 fn todo_list(cx: &Cx<App>, list: &ListKey) -> Node<Intent<App>> {
-    // PLANNED: reading is subscribing. Not reading it (panel closed) unsubscribes.
+    // BUILT: reading is subscribing. Not reading it (panel closed) unsubscribes.
     let feed = cx.read(&TodoFeed(list.clone()));                       // Loaded::{Loading, Ready, Failed}
 
     // BUILT: state declared where it is used; the closure is the declaration; it captures nothing.
@@ -196,7 +196,7 @@ fn todo_list(cx: &Cx<App>, list: &ListKey) -> Node<Intent<App>> {
     // BUILT: derived value, recomputed every frame, same non-capturing rule.
     let shown = cx.derive(list, |list, cx| preview_list(cx.app(), list));   // committed list + in-doubt asks (L5)
 
-    // PLANNED: the verdict for the last add, from the ledger.
+    // BUILT (host-reported, no ledger): the verdict for the last add.
     let verdict = cx.track::<AddTodo>(list);
 
     column![
@@ -230,6 +230,21 @@ fn row_view(cx: &Cx<App>, list: &ListKey, t: &Todo<ShownId>) -> Node<Intent<App>
     }
 }
 ```
+
+**BUILT: `cx.track` and `cx.read` (2026-10-25), and how they differ from the plan above.**
+- `cx.track::<C>(key)` takes a `Command` marker type (`Why`, `WITHIN`), not the ask. The send is marked by
+  `Act::ask_tracked::<C>(ask)` and recorded under the REDUCER's own key; the host reports the server's answer with
+  `Store::settle`. `Verdict` is `Unsent | Pending | Confirmed | Refused(why) | Unknown`. No `Withdrawn`, no ledger,
+  no watermark: the kit queues nothing, so there is nothing to withdraw, and `Unknown` is derived at read time from a
+  deadline (no timer), with `redraw_at(deadline)` registered by the view that shows it.
+- Flaw found in the plan: a verdict keyed only by (kind, key) cannot tell which of two in-flight sends an answer is
+  for. Chosen: replies are matched to sends by order (one connection); only the reply to the newest send shows, the
+  others return `Settled::Superseded`. An out-of-order server needs a key per send (`Part(key, n)`).
+- A verdict for an ended key (`Gone`/`Leaving`) or with no send awaiting it (`Unsent`) is `Err(LateWhy)` AND counted in
+  `Store::late()`.
+- `cx.read(&R)`: `R: Resource` supplies `state(&app) -> Loaded<T, E>`, `want()` and `release()` asks. The fetch is the
+  host's; the app holds the value. `sync_reads(app, store)` after each view build asks `want` for new reads and
+  `release` for resources no view read that frame. It is not tied to a key life other than the resource key's own.
 
 What the author did **not** write: a loading flag, an effect cleanup, an abort controller, a rollback, an "is this row
 still there" check, a sequence number. Those are the laws' job.
@@ -281,7 +296,7 @@ Four layers, each with exactly one writer. Detail and the data-flow diagram are 
 | Layer | Writer | Screens see it as |
 |---|---|---|
 | Server | validated commands | nothing directly; only what is published, fog-redacted per team |
-| Client replica (`game_client::Client`) | `on_message` / delivery | `cx.app()` reads, `cx.read` (PLANNED) |
+| Client replica (`game_client::Client`) | `on_message` / delivery | `cx.app()` reads, `cx.read` (BUILT) |
 | Prefs | one `PrefChange` ask | derived theme/keymap in the app |
 | UI state | `kit_state::Store` via `dispatch`, plus `UiMemory` for presentational hover/press/scroll | `cx.state` handles |
 

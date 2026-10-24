@@ -67,8 +67,14 @@ impl<App, K: Ident<App>> DynKey<App> for K {
 }
 
 /// A key of any `Ident` type, comparable and hashable across types, so one Store holds every declaration.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct AnyKey<App>(Rc<dyn DynKey<App>>);
+// By hand: `derive(Clone)` would demand `App: Clone`, and the app model is never cloned.
+impl<App> Clone for AnyKey<App> {
+    fn clone(&self) -> Self {
+        Self(Rc::clone(&self.0))
+    }
+}
 
 impl<App> AnyKey<App> {
     pub(crate) fn new<K: Ident<App>>(key: K) -> Self {

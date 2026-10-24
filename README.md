@@ -147,6 +147,104 @@ collected. `Shop` is your app model, with the server's data in it. That whole pr
 is a test: [`kit_widgets/tests/components/readme.rs`](kit_widgets/tests/components/readme.rs). It drives the
 list with real clicks, and checks were confirmed to fail when state is keyed by position or never collected.
 
+### Did the server accept it?
+
+A command can be answered, refused, or never answered. `Act::ask_tracked` sends an ask and starts the clock;
+`cx.track` reads the latest answer for that row; the host reports what its server said with `Store::settle`. The kit
+never talks to a network. Same shop, with a `Buying` command:
+
+```rust
+use kit_core::Theme;
+use kit_state::{Act, Command, Cx, Host, Ident, Intent, Life, Verdict};
+use kit_view::{Node, column, row};
+use kit_widgets::Ui;
+
+struct Shop {
+    items: Vec<u32>, // item ids, as the server last listed them
+    sent: Vec<Buy>,  // what went out to the server
+    now: Time,
+}
+#[derive(Clone, Debug, PartialEq)]
+struct Buy(u32);
+impl Host for Shop {
+    type Ask = Buy;
+    fn now(&self) -> Time {
+        self.now
+    }
+    fn motion(&self) -> MotionPref {
+        MotionPref::Full
+    }
+    fn ask(&mut self, buy: Buy) {
+        self.sent.push(buy);
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+struct Row(u32);
+impl Ident<Shop> for Row {
+    fn life(&self, shop: &Shop) -> Life {
+        match shop.items.contains(&self.0) {
+            true => Life::Live,
+            false => Life::Over,
+        }
+    }
+}
+
+/// A kind of command whose answer the UI shows: why the server may refuse it, and how long to wait.
+struct Buying;
+#[derive(Clone, Debug, PartialEq)]
+enum NoSale {
+    NotEnoughGold,
+}
+impl Command for Buying {
+    type Why = NoSale;
+    const WITHIN: Duration = Duration::from_secs(5);
+}
+
+fn shop(cx: &Cx<'_, Shop>, theme: &Theme) -> Node<Intent<Shop>> {
+    let ui = Ui::new(theme);
+    column(cx.app().items.iter().map(|&id| {
+        let key = Row(id);
+        // The reducer says "this ask is a Buying"; the kit starts the clock.
+        let buy = cx.state(
+            &key,
+            || (),
+            |_: &mut (), key: &Row, (): (), _: &Shop| Act::ask_tracked::<Buying>(Buy(key.0)),
+        );
+        // The answer is whatever the host reported for this row's latest Buying, or Unknown after five seconds.
+        let answer = match cx.track::<Buying>(&key) {
+            Verdict::Unsent => "".to_string(),
+            Verdict::Pending { .. } => "Buying...".to_string(),
+            Verdict::Confirmed { .. } => "Bought".to_string(),
+            Verdict::Refused {
+                why: NoSale::NotEnoughGold,
+                ..
+            } => "Refused: not enough gold".to_string(),
+            Verdict::Unknown { .. } => "No answer from the server".to_string(),
+        };
+        row([
+            ui.labeled_button(COIN, format!("Buy {id}"))
+                .on_press(buy.send(()))
+                .into(),
+            Node::from(ui.caption(answer)),
+        ])
+    }))
+}
+```
+
+The host's side is one call when a reply arrives: `store.settle::<Buying, _>(&app, &Row(1), Outcome::Confirmed)` (or
+`Outcome::Refused(NoSale::NotEnoughGold)`). It returns `Err` and counts in `store.late()` when the row's key has ended
+or nothing was waiting for the answer, so a reply is never silently dropped. A command still unanswered after
+`Buying::WITHIN` reads `Unknown`, and the view that shows it asks to be redrawn at that time, so an idle app wakes for
+it; a late answer still settles it. Replies are matched to sends in order; if your server can answer out of order, key
+each send separately. The verdict lives with the key: when the item leaves, its verdict is collected.
+
+`cx.read(&resource)` is the same idea for data you load: reading it tells the app to `want` it, and a frame in which no
+view read it tells the app to `release` it, so closing a panel is the cleanup. The app keeps the value (`Resource::state`
+returns `Loading`, `Ready` or `Failed`); your host fetches. Call `sync_reads(&mut app, &mut store)` once after each
+build of the view. Both are driven by real clicks in
+[`kit_widgets/tests/components/server.rs`](kit_widgets/tests/components/server.rs).
+
 ## Why use it
 
 - **Your frame, your encoder.** The UI is the last thing you record into the game's own `wgpu::CommandEncoder`
@@ -237,8 +335,9 @@ maturity matter most; choose the kit when you prefer a component tree with data-
 - **Per-frame costs to know about.** The tree is rebuilt every frame, vertex buffers are created per render, and each
   translucent group with two or more items is a full-target offscreen pass. Measure your largest screen.
 - **Fewer widgets than egui,** and no built-in docking, plotting or rich-text editing.
-- **Server-authority helpers are designed, not built.** That means tracking a sent command to its confirmed, refused
-  or unknown outcome (`cx.track` / `cx.read`). Today you model pending requests in your own app data.
+- **Server-authority helpers are small.** `cx.track` and `cx.read` hold a verdict and a subscription; they do not
+  queue, retry or withdraw commands, keep a ledger of in-doubt commands, or fold a preview over them. Your app still
+  sends, and your host still fetches and reports (see "Did the server accept it?").
 - **Requirements:** wgpu 30, Rust 1.97 (edition 2024). WebGPU only on the web; there is no WebGL2 path.
 
 ## Drawing into your frame
@@ -303,6 +402,7 @@ wake_due(&mut app, &mut store);               // timers that reducers scheduled
 let cx = Cx::routed(&app, &store, &memory);
 let root = view(&cx, &theme);
 let view_redraw = cx.redraw();                // did the view read the clock, or name a time it changes?
+sync_reads(&mut app, &mut store);             // resources the view started or stopped reading: asks to the app
 let laid = layout.layout(root, viewport, &mut text, &camera)?;
 for event in window_events {                  // your winit/browser events converted to `InputEvent`
     match router.route(&laid, &mut memory, event.clone(), app.now()) {
