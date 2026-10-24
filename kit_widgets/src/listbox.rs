@@ -9,7 +9,7 @@ use kit_core::{Axis, Border, Key, Modifiers, NamedKey, Shadow, Theme, Time, Widg
 use kit_state::{Cx, Host, Ident, Intent};
 use kit_view::{A11y, Style, Toggle, Weight, column, interactive, panel, px, scroll_area, text};
 use kit_view::{Bindings, KeyAnswer, KeyPress, Node, RevealAlign, RevealTarget, Role, ScrollSpec};
-use std::{collections::HashSet, hash::Hash, rc::Rc, time::Duration};
+use std::{collections::HashMap, collections::HashSet, hash::Hash, rc::Rc, time::Duration};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -83,8 +83,10 @@ impl<I: Clone + Eq + Hash> Selection<I> {
         input: Input<I>,
         now: Time,
     ) {
-        unique(items);
-        let position = |key: &I| items.iter().position(|(id, _)| id == key);
+        // One index of the current items: every lookup below is a hash probe, so a call is linear in the items and the
+        // selection. Scanning per lookup was quadratic: a range of n rows checked `selected.contains` n times.
+        let index = index(items);
+        let position = |key: &I| index.get(key).copied();
         self.selected.retain(|k| position(k).is_some());
         let current = self.cursor.as_ref().and_then(position);
         // `None`: the list is empty, there is nowhere to move.
@@ -128,11 +130,16 @@ impl<I: Clone + Eq + Hash> Selection<I> {
                 if gesture == Gesture::Extend {
                     self.selected.clear();
                 }
-                for (id, _) in &items[anchor.min(target)..=anchor.max(target)] {
-                    if !self.selected.contains(id) {
-                        self.selected.push(id.clone());
-                    }
-                }
+                let fresh: Vec<I> = {
+                    let chosen: HashSet<&I> = self.selected.iter().collect();
+                    items[anchor.min(target)..=anchor.max(target)]
+                        .iter()
+                        .map(|(id, _)| id)
+                        .filter(|id| !chosen.contains(id))
+                        .cloned()
+                        .collect()
+                };
+                self.selected.extend(fresh);
             }
         }
         self.cursor = Some(key);
@@ -167,6 +174,16 @@ fn unique<I: Eq + Hash>(items: &[(I, &str)]) {
     let mut seen = HashSet::with_capacity(items.len());
     let ok = items.iter().all(|(key, _)| seen.insert(key));
     assert!(ok, "listbox: duplicate item keys");
+}
+/// Each key's row index. Panics on duplicate keys, as `unique` does (a collapsed duplicate would hide a row).
+fn index<'a, I: Eq + Hash>(items: &'a [(I, &str)]) -> HashMap<&'a I, usize> {
+    let index: HashMap<&I, usize> = items
+        .iter()
+        .enumerate()
+        .map(|(row, (key, _))| (key, row))
+        .collect();
+    assert!(index.len() == items.len(), "listbox: duplicate item keys");
+    index
 }
 
 pub struct Listbox<'a, Msg, K, I> {

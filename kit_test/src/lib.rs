@@ -3,7 +3,8 @@
 //! `Handle` owns a real app, a real `Store`, the real Inter font and the real router. `click`, `press_key` and
 //! `type_text` route a frame’s batch against the retained tree, dispatch every event’s intents in order, then rebuild
 //! the next frame’s view. Controls are addressed by (Role, accessible label), never by number, and a control that is
-//! not on screen panics with its name, so a typo cannot pass as a no-op.
+//! not on screen (or scrolled out of its scroll area) panics with its name, so a typo cannot pass as a no-op. A click
+//! lands where the control is drawn, through every enclosing scroll offset.
 //!
 //! The loop is a host’s: the view reads the router’s memory (`Cx::routed`, so `cx.hovered/pressed/focused` and
 //! `cx.scroll` are live), and every layout is followed by `Router::frame` (scroll measurement, reveal, stick) and
@@ -38,6 +39,7 @@ use kit_core::{ColorVision, Key, MotionPref, Theme, Time, Viewport, WidgetId};
 use kit_input::{ClipboardRequest, InputEvent, KeyState, Modifiers, Phase, Platform};
 use kit_input::{
     Focus, NavAction, PointerButton, PointerEvent, PointerId, PointerKind, Router, UiMemory,
+    visible_rect,
 };
 use kit_layout::TaffyLayout;
 use kit_paint::paint;
@@ -206,18 +208,23 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
         self.memory.end_frame();
     }
 
-    /// Press and release the centre of the control a screen reader announces as `label` with `role`.
+    /// Press and release the centre of the visible part of the control a screen reader announces as `label` with `role`.
     /// Panics (naming the control) when the screen shows no such control: a typo must not pass as a no-op.
     pub fn click(&mut self, role: Role, label: &str) {
         let at = self.center(role, label);
         self.click_at(at);
     }
 
-    /// The centre of the control `label` with `role` (to press, drag or release over it).
+    /// The centre of the control `label` with `role`, where it is on screen (to press, drag or release over it).
+    /// Inside a scroll area that is the laid rect less the area's offset, and of the part that is in view.
+    /// Panics when no part of it is in view: a click there would land on something else.
     pub fn center(&self, role: Role, label: &str) -> Point {
-        control(&self.laid, role, label)
-            .unwrap_or_else(|| panic!("no {role:?} named {label:?}"))
-            .rect
+        let node = control(&self.laid, role, label)
+            .unwrap_or_else(|| panic!("no {role:?} named {label:?}"));
+        visible_rect(&self.laid, &self.memory, node)
+            .unwrap_or_else(|| {
+                panic!("{role:?} named {label:?} is scrolled out of view: no part of it is in its scroll area")
+            })
             .center()
     }
 
