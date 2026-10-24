@@ -104,7 +104,6 @@ fn handle(
 /// Test-local helpers on the shared harness (`kit_test::Handle` is another crate's type, so they are a trait).
 trait ListHandle {
     fn scroll_by(&mut self, dy: f64);
-    fn click_pin(&mut self, id: u32);
     fn offset(&self) -> f64;
     fn built(&self, ids: impl IntoIterator<Item = u32>) -> Vec<u32>;
 }
@@ -115,11 +114,6 @@ impl<V: Fn(&Cx<'_, App>, &Theme) -> Node<Intent<App>>> ListHandle for Handle<App
             delta: Vec2::new(0.0, dy),
             unit: DeltaUnit::Pixels,
         });
-    }
-    /// `Handle::click` aims at the laid rect, which is in content space: inside a scrolled area subtract the offset.
-    fn click_pin(&mut self, id: u32) {
-        let at = self.center(Role::CheckBox, &label(id));
-        self.click_at(Point::new(at.x, at.y - self.offset()));
     }
     fn offset(&self) -> f64 {
         match self.app().scroll.get() {
@@ -180,7 +174,7 @@ fn wheel_scrolling_shows_the_items_at_that_offset() {
 fn a_pin_stays_with_its_item_across_scrolling_and_inserts_above() {
     let mut h = handle(0..N);
     h.scroll_by(ROW * 2000.0);
-    h.click_pin(2001);
+    h.click(Role::CheckBox, &label(2001));
     assert_eq!(h.toggle_of(Role::CheckBox, &label(2001)), Toggle::On);
 
     h.scroll_by(ROW * 5000.0); // far away: item 2001 is not built, its state is kept
@@ -203,7 +197,7 @@ fn a_pin_stays_with_its_item_across_scrolling_and_inserts_above() {
 fn an_item_removed_while_scrolled_away_loses_its_state() {
     let mut h = handle(0..N);
     h.scroll_by(ROW * 2000.0);
-    h.click_pin(2001);
+    h.click(Role::CheckBox, &label(2001));
     h.scroll_by(ROW * 5000.0);
     h.tick(|app| app.items.retain(|id| *id != 2001));
     h.tick(|app| app.items.insert(2001, 2001));

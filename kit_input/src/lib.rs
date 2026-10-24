@@ -21,6 +21,7 @@ pub use event::{
 };
 pub use field::{Granularity, Platform, TextTarget, paste_ticket, text_target};
 pub use focus::FocusOutcome;
+pub use hit::visible_rect;
 pub use memory::{AnimKey, DragView, Focus, Gesture, Hover, PointerState, UiMemory};
 pub use router::{GestureConfig, Router, Routing};
 pub use scroll::{BAR_STRIP, BAR_THIN, Bar, BarView, Grip, Scrolls};
