@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the compiler, components and the wasm target; rustup installs them.
+      - run: rustup show active-toolchain || rustup toolchain install
+      # kit_wgpu's tests draw on a real adapter: Mesa's software Vulkan (lavapipe) provides one on CI.
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - name: wasm (WebGPU) builds
+        run: cargo build --locked --target wasm32-unknown-unknown -p kit_wgpu -p kit_widgets -p kit_layout
+      - name: native builds have no web runtime
+        run: |
+          for p in $(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(*[p["name"] for p in json.load(sys.stdin)["packages"]])'); do
+            if cargo tree --locked -p "$p" -e normal --target x86_64-unknown-linux-gnu --prefix none | grep -E '^(wasm-bindgen|js-sys|web-sys) '; then
+              echo "$p pulls web-only crates into the native build"; exit 1
+            fi
+          done

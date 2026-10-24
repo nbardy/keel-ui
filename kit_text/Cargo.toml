@@ -1,0 +1,19 @@
+[package]
+name = "kit_text"
+description = "Keel UI kit text: cosmic-text types used directly, glyph rasterisation and the bundled UI font."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kit_core.workspace = true
+kit_state.workspace = true
+cosmic-text.workspace = true
+swash.workspace = true
+# Grapheme and word boundaries for the editor; already in the lock via cosmic-text and kit_state.
+unicode-segmentation = "1.13"

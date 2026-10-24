@@ -1,0 +1,22 @@
+[package]
+name = "kit_state"
+description = "Keel UI kit state: React-style components as plain Rust functions, local state keyed by data (works in loops), reducers as values, data-driven cleanup."
+keywords = ["gui", "ui", "declarative", "reactive", "gamedev"]
+categories = ["gui", "game-development", "rendering"]
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kit_core.workspace = true
+# Grapheme boundaries for TextValue; already in the lock via cosmic-text. Not in the root table to keep this edit local.
+unicode-segmentation = "1.13"
+
+[dev-dependencies]
+# The library is renderer-agnostic and never names `Node`; tests and doctests build real kit_view trees.
+kit_view.workspace = true

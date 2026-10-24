@@ -1,0 +1,16 @@
+[package]
+name = "kit_paint"
+description = "Keel UI kit paint seam: Draw/DrawList, and default painter."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kit_core.workspace = true
+kit_view.workspace = true
+kit_input.workspace = true

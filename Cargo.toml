@@ -1,0 +1,53 @@
+[workspace]
+resolver = "3"
+members = [
+  "kit_core",
+  "kit_view",
+  "kit_paint",
+  "kit_input",
+  "kit_layout",
+  "kit_text",
+  "kit_wgpu",
+  "kit_raster",
+  "kit_state",
+  "kit_widgets",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.97"
+license = "WTFPL"
+repository = "https://github.com/nbardy/keel-ui"
+publish = false
+
+[workspace.dependencies]
+kit_core = { path = "kit_core" }
+kit_view = { path = "kit_view" }
+kit_state = { path = "kit_state" }
+kit_paint = { path = "kit_paint" }
+kit_input = { path = "kit_input" }
+kit_layout = { path = "kit_layout" }
+kit_text = { path = "kit_text" }
+kit_wgpu = { path = "kit_wgpu" }
+kit_raster = { path = "kit_raster" }
+kit_widgets = { path = "kit_widgets" }
+kurbo = "0.13.1"
+peniko = "0.6.1"
+taffy = "0.14.0"
+cosmic-text = "0.19.0"
+lyon = "1.0.19"
+etagere = "0.3.0"
+tiny-skia = "0.12.0"
+swash = "0.2.10"
+wgpu = { version = "30", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+# Tests rasterise and lay out a lot of text: dependencies build optimised once and stay cached.
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.test]
+opt-level = 1

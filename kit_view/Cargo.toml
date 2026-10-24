@@ -1,0 +1,18 @@
+[package]
+name = "kit_view"
+description = "Keel UI kit view tree: Node<Msg> values styled with taffy (flexbox, grid), cosmic-text text, world-anchored UI, portals."
+keywords = ["gui", "ui", "declarative", "flexbox", "gamedev"]
+categories = ["gui", "game-development", "rendering"]
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kit_core.workspace = true
+kit_text.workspace = true
+taffy.workspace = true

@@ -1,0 +1,267 @@
+//! Test support for ported components: render to a CPU golden, drive by what a player sees, check goldens.
+//!
+//! `Handle` owns a real app, a real `Store`, the real Inter font and the real router. `click`/`press_key`/`type_text`
+//! route an input event, dispatch every resulting `Intent` through `kit_state::dispatch`, and re-run the view, so a
+//! test exercises the same loop a host does. Controls are addressed by (Role, accessible label), never by number.
+//!
+//! The loop is a host's: the view reads the router's memory (`Cx::routed`, so `cx.hovered/pressed/focused` and
+//! `cx.scroll` are live), and every layout is followed by `Router::frame` (scroll measurement, reveal, stick) and
+//! `UiMemory::end_frame`. The router uses `Platform::Other` (Ctrl is the command key) on every OS, so a test that
+//! presses Ctrl+V means the same thing on a Mac as on CI.
+use kit_core::kurbo::Point;
+use kit_core::kurbo::Size;
+use kit_core::peniko::Color;
+use kit_core::{ColorVision, Key, MotionPref, Theme, Time, Viewport};
+use kit_input::{ClipboardRequest, InputEvent, KeyState, Modifiers, Phase, Platform};
+use kit_input::{PointerEvent, PointerId, PointerKind, Router, UiMemory};
+use kit_layout::TaffyLayout;
+use kit_paint::paint;
+use kit_raster::RasterUi;
+use kit_raster::golden::{self, Mode, Tolerance};
+use kit_raster::tiny_skia::{self, Pixmap};
+use kit_state::{Cx, Host, Intent, Store, dispatch, wake_due};
+use kit_view::testing::{control, text_system};
+use kit_view::{CosmicText, LaidKind, LaidOut, NoWorld, Node, Role, Semantic, SemanticState};
+use kit_view::{Toggle, semantics};
+
+pub fn theme() -> Theme {
+    Theme::new(ColorVision::Normal, MotionPref::Full)
+}
+
+/// What a component asked the host for, as text. A local type, so a test can write `impl From<ItsAsk> for Asked`
+/// (the orphan rule forbids `From<..> for String`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Asked(pub String);
+
+/// The smallest host: a clock and what its components asked for.
+pub struct TestApp {
+    pub now: Time,
+    pub asked: Vec<Asked>,
+}
+impl TestApp {
+    pub fn new() -> Self {
+        Self {
+            now: Time::default(),
+            asked: Vec::new(),
+        }
+    }
+}
+impl Host for TestApp {
+    type Ask = Asked;
+    fn now(&self) -> Time {
+        self.now
+    }
+    fn motion(&self) -> MotionPref {
+        MotionPref::Full
+    }
+    fn ask(&mut self, ask: Asked) {
+        self.asked.push(ask);
+    }
+}
+
+/// A component under test: `view` is called with a fresh `Cx` and the theme after every dispatched event.
+pub struct Handle<A: Host, V> {
+    app: A,
+    store: Store<A>,
+    view: V,
+    theme: Theme,
+    viewport: Viewport,
+    text: CosmicText,
+    laid: LaidOut<Intent<A>>,
+    memory: UiMemory,
+    router: Router,
+}
+
+impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
+    pub fn new(app: A, size: (f64, f64), view: V) -> Self {
+        let viewport = Viewport::new(Size::new(size.0, size.1), 1.0);
+        let (store, theme, mut text) = (Store::new(), theme(), text_system());
+        let mut router = Router::default();
+        router.config.platform = Platform::Other;
+        let mut memory = UiMemory::new(viewport);
+        let laid = lay_out(&app, &store, &view, &theme, viewport, &mut text, &memory);
+        router.frame(&laid, &mut memory, app.now());
+        Self {
+            app,
+            store,
+            view,
+            theme,
+            viewport,
+            text,
+            laid,
+            memory,
+            router,
+        }
+    }
+
+    pub fn app(&self) -> &A {
+        &self.app
+    }
+    /// Refused intents (`late`) and reducer faults are counted here.
+    pub fn store(&self) -> &Store<A> {
+        &self.store
+    }
+    /// Copy and paste requests the components made (answer a `Read` with `input(InputEvent::Paste { .. })`).
+    pub fn take_clipboard(&mut self) -> Vec<ClipboardRequest> {
+        self.memory.take_clipboard()
+    }
+
+    /// Route `event`, dispatch every intent it produced, then rebuild the view from the new state (one frame).
+    pub fn input(&mut self, event: InputEvent) {
+        let routed = self
+            .router
+            .route(&self.laid, &mut self.memory, event, self.app.now());
+        for intent in routed.messages() {
+            dispatch(&mut self.app, &mut self.store, intent);
+        }
+        self.frame();
+    }
+
+    /// One host frame with no input: `change` the app (advance its clock), fire due wake-ups, rebuild the view.
+    pub fn tick(&mut self, change: impl FnOnce(&mut A)) {
+        change(&mut self.app);
+        self.frame();
+    }
+
+    /// The host's per-frame step: collect ended keys, wake-ups due now (`kit_state::wake_due`) before the view, then layout,
+    /// `Router::frame` (scroll physics, focus claims) and `UiMemory::end_frame`.
+    fn frame(&mut self) {
+        // The app may have changed outside `dispatch` (a `tick`, i.e. server data): ask every key its life, as
+        // `game_client::Client::frame` does, so a test sees state collected when its key ends.
+        self.store.collect(&self.app);
+        wake_due(&mut self.app, &mut self.store);
+        self.laid = lay_out(
+            &self.app,
+            &self.store,
+            &self.view,
+            &self.theme,
+            self.viewport,
+            &mut self.text,
+            &self.memory,
+        );
+        self.router
+            .frame(&self.laid, &mut self.memory, self.app.now());
+        self.memory.end_frame();
+    }
+
+    /// Press and release the centre of the control a screen reader announces as `label` with `role`.
+    /// Panics (naming the control) when the screen shows no such control: a typo must not pass as a no-op.
+    pub fn click(&mut self, role: Role, label: &str) {
+        let at = self.center(role, label);
+        self.click_at(at);
+    }
+
+    /// The centre of the control `label` with `role` (to press, drag or release over it).
+    pub fn center(&self, role: Role, label: &str) -> Point {
+        control(&self.laid, role, label)
+            .unwrap_or_else(|| panic!("no {role:?} named {label:?}"))
+            .rect
+            .center()
+    }
+
+    /// Whether the control `label` with `role` is enabled, disabled or an inert tile, as announced.
+    pub fn state_of(&self, role: Role, label: &str) -> SemanticState {
+        self.semantic(role, label).state
+    }
+
+    /// Everything the control `label` with `role` announces.
+    pub fn semantic(&self, role: Role, label: &str) -> Semantic {
+        semantics(&self.laid)
+            .into_iter()
+            .find(|s| s.role == role && s.label == label)
+            .unwrap_or_else(|| panic!("no {role:?} named {label:?}"))
+    }
+
+    /// Press and release at a point (a click on empty space, outside a popup).
+    pub fn click_at(&mut self, at: Point) {
+        for phase in [Phase::Down, Phase::Up] {
+            self.input(InputEvent::Pointer(PointerEvent {
+                id: PointerId(1),
+                kind: PointerKind::Mouse,
+                phase,
+                at,
+                pressure: 1.0,
+            }));
+        }
+    }
+
+    pub fn press_key(&mut self, key: Key) {
+        self.press_key_with(key, Modifiers::default());
+    }
+    pub fn press_key_with(&mut self, key: Key, mods: Modifiers) {
+        for state in [KeyState::Down, KeyState::Up] {
+            self.input(InputEvent::Key { key, state, mods });
+        }
+    }
+
+    /// Committed text for whatever is focused (click a field first).
+    pub fn type_text(&mut self, text: &str) {
+        self.input(InputEvent::Text(text.to_string()));
+    }
+
+    /// Every text node's lines as shown, in tree order (a value printed beside the controls).
+    pub fn texts(&self) -> Vec<String> {
+        self.laid
+            .root
+            .descendants()
+            .into_iter()
+            .filter_map(|node| match &node.kind {
+                LaidKind::Text { layout, .. } => self.text.buffer(layout.id),
+                LaidKind::Stack { .. }
+                | LaidKind::Panel { .. }
+                | LaidKind::Shape { .. }
+                | LaidKind::Interactive { .. }
+                | LaidKind::Scroll { .. }
+                | LaidKind::TextField { .. }
+                | LaidKind::Layer { .. }
+                | LaidKind::World { .. }
+                | LaidKind::Portal { .. } => None,
+            })
+            .flat_map(|buffer| buffer.lines.iter().map(|line| line.text().to_owned()))
+            .collect()
+    }
+
+    /// Whether the control `label` with `role` is on screen (a popup's options exist only while it is open).
+    pub fn shows(&self, role: Role, label: &str) -> bool {
+        control(&self.laid, role, label).is_some()
+    }
+
+    /// The toggle state the control announces (`aria-pressed`).
+    pub fn toggle_of(&self, role: Role, label: &str) -> Toggle {
+        self.semantic(role, label).toggle
+    }
+
+    /// The component as the CPU backend draws it over the theme's background; compare with `tests/golden/<name>.png`
+    /// (`KIT_BLESS=1` writes it). Rule: look at the picture before blessing it.
+    pub fn assert_golden(&mut self, name: &str) {
+        let list = paint(&self.laid, &self.memory, &self.theme, self.app.now());
+        let size = self.viewport.size;
+        let mut pixmap = Pixmap::new(size.width as u32, size.height as u32).expect("non-zero size");
+        let bg: Color = self.theme.colors.surface;
+        let [r, g, b, _] = bg.to_rgba8().to_u8_array();
+        pixmap.fill(tiny_skia::Color::from_rgba8(r, g, b, 255));
+        RasterUi::new()
+            .render(&list, &mut self.text, &mut pixmap)
+            .expect("draw list renders");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+        if let Err(e) = golden::compare(&dir, name, &pixmap, Tolerance::ROUNDING, Mode::from_env())
+        {
+            panic!("golden `{name}`: {e}");
+        }
+    }
+}
+
+fn lay_out<A: Host>(
+    app: &A,
+    store: &Store<A>,
+    view: &impl Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>,
+    theme: &Theme,
+    viewport: Viewport,
+    text: &mut CosmicText,
+    memory: &UiMemory,
+) -> LaidOut<Intent<A>> {
+    let root = view(&Cx::routed(app, store, memory), theme);
+    TaffyLayout::new()
+        .layout(root, viewport, text, &NoWorld)
+        .expect("component tree lays out")
+}

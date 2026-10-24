@@ -1,0 +1,33 @@
+[package]
+name = "kit_wgpu"
+description = "Keel UI kit wgpu renderer: records UI into your own wgpu command encoder, in the same frame as your game scene (native and WebGPU)."
+keywords = ["gui", "wgpu", "webgpu", "gamedev", "hud"]
+categories = ["gui", "game-development", "rendering"]
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kit_core.workspace = true
+kit_view.workspace = true
+kit_paint.workspace = true
+lyon.workspace = true
+etagere.workspace = true
+# Backends (metal/vulkan/gles/webgpu) are the host's choice; the renderer only needs WGSL.
+wgpu = { version = "30", default-features = false, features = ["wgsl"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["webgpu", "wgsl"] }
+
+[dev-dependencies]
+pollster = "0.4"
+# Parity test: the same fixtures drawn by the CPU backend. Dev-only, so the backends still never depend on each other.
+kit_raster.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+wgpu = { version = "30", default-features = false, features = ["metal", "vulkan", "gles", "wgsl"] }

@@ -1,0 +1,15 @@
+[package]
+name = "kit_core"
+description = "Keel UI kit core vocabulary: ids, units, theme tokens, shared shape types; re-exports kurbo and peniko."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kurbo.workspace = true
+peniko.workspace = true

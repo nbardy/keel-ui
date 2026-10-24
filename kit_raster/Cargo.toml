@@ -1,0 +1,18 @@
+[package]
+name = "kit_raster"
+description = "Keel UI kit CPU raster renderer (tiny-skia) for golden tests."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kit_core.workspace = true
+kit_view.workspace = true
+kit_paint.workspace = true
+kit_input.workspace = true
+tiny-skia.workspace = true

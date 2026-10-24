@@ -1,0 +1,18 @@
+[package]
+name = "kit_input"
+description = "Keel UI kit input: router with hit-testing, gestures, focus, scrolling and text editing that tells the game which input the UI did not take."
+keywords = ["gui", "ui", "input", "gamedev", "wgpu"]
+categories = ["gui", "game-development", "rendering"]
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kit_core.workspace = true
+kit_view.workspace = true
+kit_state.workspace = true
