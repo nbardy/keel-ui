@@ -1,19 +1,103 @@
 # Keel UI kit
 
-**React-style UI in pure Rust, drawn by wgpu inside your own render pass.**
+**Declarative Rust UI for your own game engine or native GPU app.**
 
-A declarative, functional-reactive UI library for games and GPU apps: components are plain functions, local state
-works in loops and branches, events are values, and the UI records into *your* wgpu command encoder, in the same frame
-as your scene. No web runtime, no second renderer, no separate UI compositor. Layout is [taffy] (flexbox and grid) and text
-is [cosmic-text], both used through their own types. Runs natively (Metal, Vulkan, DX12) and in the browser (wasm +
-WebGPU) from the same code.
+Bring your renderer, your app model and your event loop. The kit provides composable UI functions, keyed local state,
+layout, text, input routing and GPU drawing. Build game HUDs and menus, simulation viewers, editors and native app
+interfaces without a DOM or an embedded WebView. Your app owns the window and the frame; the wgpu backend records the
+UI into your command encoder, as one more pass after your scene.
+
+Components are plain functions that return a value tree. Local state follows data identity, not call order, and every
+interaction is an explicit value. Layout is [taffy] (flexbox and grid) and text is [cosmic-text], both used through
+their own types. The same code runs natively (Metal, Vulkan, DX12) and in the browser (wasm + WebGPU).
 
 ![The kit's HUD drawn over the game's 3D sea in one frame: buttons, hull bar, weapon tray, and health bars anchored to ships](docs/hud-over-sea.jpg)
 
 *Every pixel of UI above is the kit, recorded into the game's own encoder after the 3D scene. The health bars and the
 range ring follow the ships in world space. Captured by the game's headless-Chrome WebGPU test.*
 
-## Example
+## Who owns what
+
+| Your app owns | The kit provides |
+|---|---|
+| The window and the event loop | Components and their structure |
+| App data and the commands that change it | Keyed local UI state, with lifetimes your data decides |
+| Assets, decoding, background work | Layout (taffy) and text (cosmic-text) |
+| Device, queue, frame pacing and `queue.submit` | UI drawing recorded into your encoder |
+| Converting platform events (`kit_winit` does it for winit) | Hit-testing, focus, scrolling, text editing |
+| Deciding when to draw | What changed: the UI's own animations, timers and gestures |
+
+A few terms, since they are easy to conflate:
+
+- **Native app** here means a program running directly on the OS, with controls the kit draws on the GPU.
+- **No DOM-drawn UI**: in the browser the kit draws into a WebGPU `<canvas>`. The browser host still borrows platform
+  pieces: input events, and a hidden textarea for IME and the clipboard.
+- **Native OS widgets** (system menus, file dialogs, the platform's accessibility tree) are something else, and the
+  kit does not provide them.
+
+## Why own your engine
+
+A focused engine can choose its simulation, renderer, data structures and frame scheduling around the one product it
+is for, which matters when the features or performance targets do not fit a general engine's assumptions. Coding
+agents make focused engines and custom app shells practical for more projects. The kit is one building block for that
+approach: it does the UI and leaves the rest of the architecture to you.
+
+## Examples
+
+### A local app
+
+A simulation viewer's controls. There is no server: `Ask` is just "a command for the app", and the app decides.
+
+```rust
+/// What the UI may ask the app to do: set a parameter, save a file, start a job, send a message.
+#[derive(Clone, Debug, PartialEq)]
+enum Command {
+    Speed(f64),
+    ToggleRecording,
+    SaveSnapshot,
+}
+
+impl Host for Viewer {
+    type Ask = Command;
+    fn ask(&mut self, command: Command) {
+        match command {
+            // The app decides: while recording, speed is capped at 2x.
+            Command::Speed(speed) if self.recording && speed > 2.0 => {}
+            Command::Speed(speed) => self.speed = speed,
+            Command::ToggleRecording => self.recording = !self.recording,
+            Command::SaveSnapshot => self.saved.push(self.speed),
+        }
+    }
+    // now() and motion(): the clock and the reduced-motion preference, both inputs.
+}
+
+fn controls(cx: &Cx<'_, Viewer>, theme: &Theme) -> Node<Intent<Viewer>> {
+    let (app, ui) = (cx.app(), Ui::new(theme));
+    let record = match app.recording {
+        true => "Stop recording",
+        false => "Record",
+    };
+    column([
+        slider(Slider {
+            theme,
+            key: "speed",
+            label: "Speed",
+            value: app.speed, // always the app's value: a refused change snaps back
+            range: 0.5..=4.0,
+            step: Step::By(0.5),
+            on_change: |speed| Intent::Ask(Command::Speed(speed)),
+        }),
+        ui.labeled_button(DISK, record).on_press(Intent::Ask(Command::ToggleRecording)).into(),
+        ui.labeled_button(DISK, "Save snapshot").on_press(Intent::Ask(Command::SaveSnapshot)).into(),
+    ])
+}
+```
+
+The controls hold no copy of the speed, so nothing can drift from the app. The program is a test
+([`kit_widgets/tests/components/local_app.rs`](kit_widgets/tests/components/local_app.rs)): it drives the slider with
+real keys and checks that a refused change leaves the slider on the app's value.
+
+### A keyed list with server data
 
 A shop list where each row has its own pin (local state) and a Buy button (a request to the server):
 
@@ -71,15 +155,15 @@ list with real clicks, and checks were confirmed to fail when state is keyed by 
 - **World-anchored UI built in.** `world(anchor, node)` places UI at a projected 3D point: nameplates, health bars,
   markers.
 - **Functional reactive, no dependency lists.** Views are functions from app data to a value tree, re-run every frame.
-  The game's 58-node HUD rebuilds and lays out in about 23 µs (layout only; whole-frame numbers for large screens
-  are not measured yet, see limits).
+  Fine for HUDs and menus; long lists cost real time today (see limits for the numbers).
 - **Local state without hook rules.** `cx.state(&key, init, reducer)` is keyed by data, so it works in loops, branches
   and reordered lists. The key's `life` (a function of your app data) decides when state is collected. An event that
   arrives for a dead key is refused and counted, never applied to the wrong row.
 - **Server data is just your model.** Views read the latest server state directly. A press becomes an `Ask` your host
   sends over the network. Nothing caches a copy that can go stale.
 - **Events are data.** Every press, key and edit is an `Intent` value. Tests drive real layouts with real clicks, and
-  input can be replayed.
+  the clock is an input, so the same events and times give the same intents. (Replay is deterministic in memory; the
+  kit has no serialized replay format.)
 - **The standard libraries, unwrapped.** A node's style *is* a `taffy::Style`, and text *is* `cosmic-text`. There's
   no layout or text abstraction of the kit's own to learn.
 - **No web runtime on native.** Native builds are pure Rust down to wgpu, and CI fails if `wasm-bindgen`, `js-sys` or
@@ -90,11 +174,15 @@ list with real clicks, and checks were confirmed to fail when state is keyed by 
   listbox, menu, modal, tabs, table, toast, tooltip, colour picker…), most 50–190 lines. The library is the
   infrastructure; components are meant to be copied into your crate and restyled.
 
-**Pick it** for a Rust game or GPU app with your own wgpu loop and a vector-and-text UI (HUD, menus, chat, shops, unit
-panels) that you want to write as declarative components with local state, especially a multiplayer one where the
-server owns the truth. Images cover item icons, portraits and game render targets. **Wait** if your UI is
-controller-first (no spatial navigation yet). **Pick something else** for a Bevy game (Bevy UI),
-or for debug panels, inspectors and tools (egui).
+**Pick it** for a Rust game, simulation viewer, editor or native GPU app with your own wgpu loop, whose UI (HUD, menus,
+panels, inspectors, chat, shops) you want to write as declarative components with local state, including multiplayer
+apps where the server owns the truth. Images cover item icons, portraits and live render targets.
+
+**Wait** if your UI is controller-first (no spatial navigation yet), shows long lists (no virtualisation yet), or must
+work with a screen reader (see limits).
+
+**Pick something else** for a Bevy game (Bevy UI). Choose egui when its large widget set, its integrations and its
+maturity matter most; choose the kit when you prefer a component tree with data-keyed state and value events.
 
 ## Status and limits
 
@@ -102,15 +190,24 @@ or for debug panels, inspectors and tools (egui).
   four station consoles, shop, chat, settings). That game's DOM UI was deleted in its favour on 2026-10-23.
 - **Not on crates.io yet:** depend on it by git or path. Licence: [WTFPL](LICENSE); ported egui code and the
   bundled Inter font keep their own licences ([THIRD_PARTY.md](THIRD_PARTY.md)).
-- **No screen-reader support.** There is a semantics mirror, but it exists for tests and keyboard activation;
-  accessibility is out of scope by owner decision.
+- **No screen-reader support.** The kit builds a semantics tree (roles, labels, values, states) for tests and keyboard
+  activation, but nothing hands it to the platform's accessibility API. For a game HUD that may be acceptable; for an
+  editor or app that people depend on, it is a serious gap. A native bridge (AccessKit) could consume the same tree;
+  it is not built.
 - **No gamepad input or spatial navigation.** Focus moves by Tab order (Up/Down walk it too); a controller-driven
   inventory grid needs the game to map buttons to keys and steer focus itself.
+- **Long lists are slow; no virtualisation.** Every row is laid out every frame. On an Apple M4
+  ([`docs/BENCH.md`](docs/BENCH.md), one run, a list of rows with text and a button), layout takes 2.4 ms per frame at
+  100 rows, 28 ms at 1,000 and 326 ms at 10,000; egui's whole CPU frame is about 10× cheaper. The game's 58-node
+  in-match HUD lays out in about 23 µs (layout only, text layouts cached). Why a list row costs so much more per node
+  than the HUD is not yet profiled.
+- **Context menus are the host's.** Right-click and long-press are not recognised by the router: the host detects
+  the gesture and opens a menu, and focus is not yet restored when a popup closes.
 - **A native starter, no browser starter.** `kit_winit` (winit events, IME, arboard clipboard) and its `starter`
   example run natively. The browser adapter (canvas events, the hidden IME/clipboard textarea) still lives in the game
   that uses the kit; a standalone browser example is planned.
-- **Performance is measured for a small HUD only.** The tree is rebuilt every frame, vertex buffers are created per
-  render, and each translucent group with two or more items is a full-target offscreen pass. Measure your largest screen.
+- **Per-frame costs to know about.** The tree is rebuilt every frame, vertex buffers are created per render, and each
+  translucent group with two or more items is a full-target offscreen pass. Measure your largest screen.
 - **Fewer widgets than egui,** and no built-in docking, plotting or rich-text editing.
 - **Server-authority helpers are designed, not built.** That means tracking a sent command to its confirmed, refused
   or unknown outcome (`cx.track` / `cx.read`). Today you model pending requests in your own app data.
@@ -139,10 +236,14 @@ ui.record(&draws, FrameTarget {
     size: (width, height),                             // physical pixels
 })?;
 
-queue.submit([encoder.finish()]);
-drop(ui);                                              // frame over: glyph-atlas fence, text-cache eviction
+ui.submitted(queue.submit([encoder.finish()]));       // frame over: frees the glyph-atlas pages it used
 surface_texture.present();
 ```
+
+`submitted` takes the `wgpu::SubmissionIndex` of the submit that carried the encoder. Call it even when `record`
+returned an error. A `UiFrame` dropped without it is *abandoned*: its CPU text cache still ends the frame, but the atlas
+pages it touched stay reserved until a later submitted frame covers them (safe, never freed early), and
+the `WgpuUi::abandoned_frames` counter shows a host that forgets.
 
 What that leaves up to you:
 
@@ -168,11 +269,13 @@ let mut store = Store::<App>::new();          // every component's local state, 
 let mut memory = UiMemory::new(viewport);     // hover, focus, scroll, gestures
 let (mut layout, router) = (TaffyLayout::new(), Router::default());
 
-// every frame, before drawing
+// every frame
 store.collect(&app);                          // server data changed: end the state of keys whose life is Over
 wake_due(&mut app, &mut store);               // timers that reducers scheduled
-let root = view(&Cx::routed(&app, &store, &memory), &theme);
-// ... lay out as above, then route this frame's input against what the player saw:
+let cx = Cx::routed(&app, &store, &memory);
+let root = view(&cx, &theme);
+let view_redraw = cx.redraw();                // did the view read the clock, or name a time it changes?
+let laid = layout.layout(root, viewport, &mut text, &camera)?;
 for event in window_events {                  // your winit/browser events converted to `InputEvent`
     match router.route(&laid, &mut memory, event.clone(), app.now()) {
         Routing::Handled(intents) => intents.into_iter().for_each(|i| dispatch(&mut app, &mut store, i)),
@@ -181,8 +284,27 @@ for event in window_events {                  // your winit/browser events conve
     }
 }
 router.frame(&laid, &mut memory, app.now());  // scroll momentum, focus requests
+let draws = paint(&laid, &memory, &theme, app.now()); // ...and record as above
 memory.end_frame();
+
+// when to draw next: every source of time-driven change, combined
+match draws.frame_redraw(view_redraw, store.redraw(&app), memory.redraw(&laid)) {
+    Redraw::Now => window.request_redraw(),   // something is moving: a tween, a fling, an exit transition
+    Redraw::At(t) => wake_at(t),              // a timer, the next caret blink, a tooltip's delay
+    Redraw::Idle => {}                        // nothing changes until input or an app change: sleep
+}
 ```
+
+**When input becomes visible.** All of a frame's events route against the tree laid out for that frame (what the
+user saw). Each event's intents are dispatched before the next event routes, so reducers see them in order, but the
+view only reflects them in the next frame. An intent for a key that is no longer `Live` is refused and counted. So of two
+clicks in one frame on a keyed row whose first click removes it, the second still hits the row and is refused.
+
+**When to draw.** A game that renders every frame can ignore `Redraw`. An app that should sleep asks it each frame. The
+kit guarantees that drawing at any time before an `At(t)` (or at any time, for `Idle`) with no input produces the same
+`DrawList` (`kit_widgets/tests/components/lifecycle.rs` checks this on twelve real scenes). Input, and changes to your
+app data, are yours to wake on. A view that reads `cx.now()` asks for `Now` every frame; a component that knows exactly
+when its output changes says `cx.redraw_at(t)` instead (the tooltip does).
 
 Your app implements `Host` (a clock, a motion preference, and where `Ask`s go). The clock is an input, never read from
 the OS, so tests and replays are deterministic.
@@ -214,8 +336,8 @@ between two hit-testers.
 `egui-wgpu` renders into your existing pass, egui `Id`s can be derived from item ids, and `egui_kittest` tests by
 semantics and snapshots. The kit's case is the combination, not any single feature: a declarative component tree laid
 out by taffy, local reducers whose events are values, state lifetimes your app defines (and late input refused), and
-input routing that tells the game what the UI did not take (`Handled` / `Captured` / `Passed`). Choose it if you
-prefer that way of writing a game's UI; choose egui for tools, or when you need its widget breadth.
+input routing that tells the game what the UI did not take (`Handled` / `Captured` / `Passed`). Choose the kit if
+you prefer that way of writing UI; choose egui when its widget breadth, integrations and maturity matter more.
 
 ## Images and game textures
 
@@ -252,8 +374,9 @@ closure that must not capture anything (`const { assert!(size_of::<F>() == 0) }`
 compile error and the reducer can travel inside the `Intent`. `cx.state` returns the value plus a sender, and
 `sender.send(ev)` *builds* an intent without applying it. `dispatch` applies it later, runs the reducer, forwards any
 `Ask` to your `Host`, and collects ended keys. `Life::Leaving(t)` keeps state inert until `t`, so exit animations
-have their data. Also built on the same store: `cx.derive` (memoised values), `cx.animate` (tweens that respect
-reduced motion) and timers (`Act::wake`). Interaction reads (`cx.hovered/pressed/focused/drag`, `cx.scroll`) come
+have their data; your `life` rule must return `Over` once `t` has passed, or the state is never collected. Also built
+on the same store: `cx.derive` (a named, non-capturing derivation, recomputed on every call: there is no memo),
+`cx.animate` (tweens that respect reduced motion) and timers (`Act::wake`). Interaction reads (`cx.hovered/pressed/focused/drag`, `cx.scroll`) come
 from the router's memory.
 
 **Layout.** Each node carries a `Style { layout: taffy::Style, placement, content }`, and the tree is rebuilt into
@@ -262,7 +385,7 @@ agree. Placement adds safe-area anchors and world anchors. Portals (popups, moda
 their own layers; dismissal is data, and a modal takes input from the world beneath it.
 
 **Input.** You convert your window's events to `InputEvent`, and `Router::route` hit-tests the laid-out tree. It owns
-gestures (press, drag, long-press), focus and Tab order, scroll (momentum, nested hand-off, scrollbars), text editing
+gestures (press, multi-click, drag), focus and Tab order, scroll (momentum, nested hand-off, scrollbars), text editing
 (`EditorState`, with IME and clipboard bridged by the host) and keyboard activation. It answers with
 `Routing::{Handled(intents), Captured, Passed}`, so the game knows exactly which input is still its own.
 
@@ -271,8 +394,9 @@ clip layers). `kit_wgpu` tessellates shapes with lyon (cached), packs glyphs int
 pass into your encoder. `kit_raster` is a tiny-skia CPU backend with the same `DrawList`, used for golden-image tests.
 
 **Guarantees and tests.**
-- The CPU and GPU backends agree per pixel on every scene fixture (`kit_wgpu/tests/parity.rs`), with a mutation check
-  per draw kind.
+- The CPU and GPU backends agree on every scene fixture within a stated tolerance: each channel within 8/255, and at
+  most 1.5% of pixels outside that (anti-aliased curve edges differ). `kit_wgpu/tests/parity.rs` also checks, per draw
+  kind, that leaving the kind out breaks the match.
 - Every component has behaviour tests driven through the real router by role and label (`kit_widgets/tests/`), plus
   golden images.
 - The game's HUD and screens are pinned by goldens and by headless-Chrome WebGPU stages that click the real canvas.
@@ -311,8 +435,9 @@ cargo test --workspace                        # everything
 ## Further reading
 
 - Design, API and the lineage (Om Next, Bonsai, Elm, React), with five competing designs and their critiques:
-  [`notes/engine/ui/DESIGN.md`](docs/DESIGN.md)
-- Codebase map and test layout: [`CODEBASE.md`](docs/CODEBASE.md)
+  [`docs/DESIGN.md`](docs/DESIGN.md)
+- Codebase map and test layout, including how the game that uses the kit is tested:
+  [`docs/CODEBASE.md`](docs/CODEBASE.md)
 - Porting a component from egui: [`PORTING.md`](docs/PORTING.md)
 
 [taffy]: https://github.com/DioxusLabs/taffy

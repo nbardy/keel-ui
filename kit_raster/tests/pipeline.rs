@@ -34,7 +34,14 @@ fn push(opacity: f32, clip: Clip) -> Draw {
     Draw::PushLayer { opacity, clip }
 }
 fn render(items: Vec<Draw>, target: &mut Pixmap) -> Result<(), RenderError> {
-    RasterUi::new().render(&DrawList { items }, &mut text_system(), target)
+    RasterUi::new().render(
+        &DrawList {
+            items,
+            ..Default::default()
+        },
+        &mut text_system(),
+        target,
+    )
 }
 fn near(a: [u8; 3], b: [u8; 3], tol: u8) -> bool {
     a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= tol)
@@ -139,6 +146,7 @@ fn glyphs_take_the_brush_unless_a_span_coloured_them_and_whitespace_draws_nothin
         let layout = text.layout(&s, &style, MaxWidth::Unbounded).id;
         let mut p = canvas(80, 40, [0, 0, 0]);
         let list = DrawList {
+            redraw: kit_core::Redraw::Idle,
             items: vec![Draw::Glyphs {
                 layout,
                 origin: Point::new(4.0, 4.0),

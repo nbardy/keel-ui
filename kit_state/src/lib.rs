@@ -30,5 +30,5 @@ pub use ident::{Host, Ident, Life, Part};
 pub use input::{Drag, Interaction, Unrouted};
 pub use intent::{Intent, Late, LateWhy, dispatch, wake_due};
 pub use presence::{Disclosure, DisclosureEv, Easing, Phase, Presence, Since};
-pub use store::{Due, LATE_LOG, Store};
+pub use store::{LATE_LOG, Store};
 pub use text::{Applied, Dir, History, Rev, Selection, TextValue, UNDO_DEPTH};

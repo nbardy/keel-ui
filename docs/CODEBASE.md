@@ -42,7 +42,7 @@ is superseded by this implemented image path.
 
 ## 1. Crate map
 
-All under `keel/crates/kit/`. No kit crate depends on Keel crates. Dependency direction: `kit_core` <- `kit_view` <-
+All at this repository's root. No kit crate depends on the game's crates. Dependency direction: `kit_core` <- `kit_view` <-
 `kit_input` / `kit_layout` / `kit_text` / `kit_state` <- `kit_paint` <- backends. Backends never depend on each other,
 except `kit_widgets` which currently depends on `kit_raster` (for tests; see §7 step 7).
 

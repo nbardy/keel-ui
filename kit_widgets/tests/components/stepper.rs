@@ -1,10 +1,11 @@
 //! Stepper goldens and the hold-repeat, driven like a host: real router presses, `Handle::tick` frames that fire the
 //! kit wake-ups (`kit_state::wake_due`) the stepper schedules.
 use crate::support::{Handle, TestApp};
+use kit_core::Redraw;
 use kit_core::kurbo::Point;
 use kit_core::{Key, NamedKey, Theme, Time};
 use kit_input::{InputEvent, Phase, PointerEvent, PointerId, PointerKind};
-use kit_state::{Cx, Due, Host, Ident, Intent, Life};
+use kit_state::{Cx, Host, Ident, Intent, Life};
 use kit_view::{Node, Role, SemanticState};
 use kit_widgets::stepper::{Stepper, stepper};
 use std::time::Duration;
@@ -87,7 +88,7 @@ fn holding_plus_accelerates_and_stops_at_max_without_an_extra_release_step() {
     assert_eq!(value(&h), 1);
     assert_eq!(
         h.store().next_due(),
-        Due::At(Time(Duration::from_millis(400))),
+        Redraw::At(Time(Duration::from_millis(400))),
         "the host may sleep until the repeat"
     );
     at(&mut h, 399);
@@ -109,7 +110,7 @@ fn holding_plus_accelerates_and_stops_at_max_without_an_extra_release_step() {
     assert_eq!(value(&h), 20, "sparse frames catch up and clamp");
     assert_eq!(
         h.store().next_due(),
-        Due::Idle,
+        Redraw::Idle,
         "holding at max schedules nothing more"
     );
     at(&mut h, 20_000);
@@ -126,7 +127,7 @@ fn holding_plus_accelerates_and_stops_at_max_without_an_extra_release_step() {
     assert_eq!(value(&h), 19, "release adds no extra step after a press");
     assert_eq!(
         h.store().next_due(),
-        Due::Idle,
+        Redraw::Idle,
         "a release cancels the pending repeat"
     );
     at(&mut h, 30_000);

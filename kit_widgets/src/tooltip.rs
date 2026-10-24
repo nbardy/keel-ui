@@ -39,7 +39,9 @@ pub fn tooltip<A: Host, K: Ident<A>>(
     );
     let shown = match *hover {
         Hover::Away => false,
-        Hover::Since(start) => cx.hovered(&p.key) && cx.now().since(start) >= p.delay,
+        Hover::Since(start) => {
+            cx.hovered(&p.key) && cx.redraw_at(Time(start.0 + p.delay)).since(start) >= p.delay
+        }
     };
     let (enter, leave) = (hover.send(true), hover.send(false));
     let both = |a, b| Intent::All(vec![a, b]);

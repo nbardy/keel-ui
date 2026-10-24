@@ -1,8 +1,8 @@
 //! Test support for ported components: render to a CPU golden, drive by what a player sees, check goldens.
 //!
 //! `Handle` owns a real app, a real `Store`, the real Inter font and the real router. `click`/`press_key`/`type_text`
-//! route an input event, dispatch every resulting `Intent` through `kit_state::dispatch`, and re-run the view, so a
-//! test exercises the same loop a host does. Controls are addressed by (Role, accessible label), never by number.
+//! route a frame’s batch against the retained tree, dispatch every event’s intents in order,
+//! then rebuild the next frame’s view. Controls are addressed by (Role, accessible label), never by number.
 //!
 //! The loop is a host's: the view reads the router's memory (`Cx::routed`, so `cx.hovered/pressed/focused` and
 //! `cx.scroll` are live), and every layout is followed by `Router::frame` (scroll measurement, reveal, stick) and
@@ -59,7 +59,7 @@ impl Host for TestApp {
     }
 }
 
-/// A component under test: `view` is called with a fresh `Cx` and the theme after every dispatched event.
+/// A component under test: `view` is called once after a frame’s batch of events, with a fresh `Cx`.
 pub struct Handle<A: Host, V> {
     app: A,
     store: Store<A>,
@@ -70,6 +70,7 @@ pub struct Handle<A: Host, V> {
     laid: LaidOut<Intent<A>>,
     memory: UiMemory,
     router: Router,
+    view_redraw: kit_core::Redraw,
 }
 
 impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
@@ -79,7 +80,8 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
         let mut router = Router::default();
         router.config.platform = Platform::Other;
         let mut memory = UiMemory::new(viewport);
-        let laid = lay_out(&app, &store, &view, &theme, viewport, &mut text, &memory);
+        let (laid, view_redraw) =
+            lay_out(&app, &store, &view, &theme, viewport, &mut text, &memory);
         router.frame(&laid, &mut memory, app.now());
         Self {
             app,
@@ -91,6 +93,7 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
             laid,
             memory,
             router,
+            view_redraw,
         }
     }
 
@@ -106,15 +109,40 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
         self.memory.take_clipboard()
     }
 
-    /// Route `event`, dispatch every intent it produced, then rebuild the view from the new state (one frame).
+    /// A single-event frame. Use input_frame for a host batch: every event hits the
+    /// retained layout and each event's intents dispatch before the next event routes.
     pub fn input(&mut self, event: InputEvent) {
-        let routed = self
-            .router
-            .route(&self.laid, &mut self.memory, event, self.app.now());
-        for intent in routed.messages() {
-            dispatch(&mut self.app, &mut self.store, intent);
+        self.input_frame([event]);
+    }
+    pub fn input_frame(&mut self, events: impl IntoIterator<Item = InputEvent>) {
+        for event in events {
+            let routed = self
+                .router
+                .route(&self.laid, &mut self.memory, event, self.app.now());
+            for intent in routed.messages() {
+                dispatch(&mut self.app, &mut self.store, intent);
+            }
         }
         self.frame();
+    }
+    /// The independent sources and their one host-facing combination.
+    pub fn redraw_sources(&self) -> [kit_core::Redraw; 4] {
+        [
+            self.view_redraw,
+            self.store.redraw(&self.app),
+            self.memory.redraw(&self.laid),
+            self.draw().redraw,
+        ]
+    }
+    pub fn draw(&self) -> kit_paint::DrawList {
+        paint(&self.laid, &self.memory, &self.theme, self.app.now())
+    }
+    pub fn redraw(&self) -> kit_core::Redraw {
+        self.draw().frame_redraw(
+            self.view_redraw,
+            self.store.redraw(&self.app),
+            self.memory.redraw(&self.laid),
+        )
     }
 
     /// One host frame with no input: `change` the app (advance its clock), fire due wake-ups, rebuild the view.
@@ -130,7 +158,7 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
         // `game_client::Client::frame` does, so a test sees state collected when its key ends.
         self.store.collect(&self.app);
         wake_due(&mut self.app, &mut self.store);
-        self.laid = lay_out(
+        (self.laid, self.view_redraw) = lay_out(
             &self.app,
             &self.store,
             &self.view,
@@ -174,24 +202,26 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
 
     /// Press and release at a point (a click on empty space, outside a popup).
     pub fn click_at(&mut self, at: Point) {
-        for phase in [Phase::Down, Phase::Up] {
-            self.input(InputEvent::Pointer(PointerEvent {
+        self.input_frame([Phase::Down, Phase::Up].map(|phase| {
+            InputEvent::Pointer(PointerEvent {
                 id: PointerId(1),
                 kind: PointerKind::Mouse,
                 phase,
                 at,
                 pressure: 1.0,
-            }));
-        }
+            })
+        }));
     }
 
     pub fn press_key(&mut self, key: Key) {
         self.press_key_with(key, Modifiers::default());
     }
     pub fn press_key_with(&mut self, key: Key, mods: Modifiers) {
-        for state in [KeyState::Down, KeyState::Up] {
-            self.input(InputEvent::Key { key, state, mods });
-        }
+        self.input_frame([KeyState::Down, KeyState::Up].map(|state| InputEvent::Key {
+            key,
+            state,
+            mods,
+        }));
     }
 
     /// Committed text for whatever is focused (click a field first).
@@ -260,9 +290,12 @@ fn lay_out<A: Host>(
     viewport: Viewport,
     text: &mut CosmicText,
     memory: &UiMemory,
-) -> LaidOut<Intent<A>> {
-    let root = view(&Cx::routed(app, store, memory), theme);
-    TaffyLayout::new()
+) -> (LaidOut<Intent<A>>, kit_core::Redraw) {
+    let cx = Cx::routed(app, store, memory);
+    let root = view(&cx, theme);
+    let redraw = cx.redraw();
+    let laid = TaffyLayout::new()
         .layout(root, viewport, text, &NoWorld)
-        .expect("component tree lays out")
+        .expect("component tree lays out");
+    (laid, redraw)
 }

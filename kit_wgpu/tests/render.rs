@@ -32,7 +32,10 @@ fn solid_rect(rect: Rect, fill: Brush) -> Draw {
     }
 }
 fn list(items: Vec<Draw>) -> DrawList {
-    DrawList { items }
+    DrawList {
+        items,
+        ..Default::default()
+    }
 }
 fn push(opacity: f32) -> Draw {
     Draw::PushLayer {
@@ -287,4 +290,61 @@ fn typical_hud_is_a_handful_of_draw_calls() {
     let stats = h.ui.last_stats();
     eprintln!("HUD draw calls: {stats:?}");
     assert!(stats.draw_calls <= 6, "{stats:?}");
+}
+
+/// An abandoned UiFrame cannot claim its still-unsubmitted encoder is fenced.
+/// The failed second frame must also finish explicitly after the covering submit.
+#[test]
+fn abandoned_frame_pins_pages_until_a_later_explicit_submission() {
+    let mut h = Harness::new(16, 16, 1.0);
+    let mut text = text_system();
+    let letters = page_sized_letters(&mut text);
+    let all = huge_glyphs(&mut text, &letters[..4]);
+    let fresh = huge_glyphs(&mut text, &letters[4..6]);
+    let viewport = kit_core::Viewport::new(kit_core::kurbo::Size::new(16., 16.), 1.);
+    let surface = &h.surface;
+    fn target<'a>(
+        surface: &'a kit_wgpu::WgpuSurface,
+        encoder: &'a mut wgpu::CommandEncoder,
+    ) -> kit_wgpu::FrameTarget<'a> {
+        kit_wgpu::FrameTarget {
+            encoder,
+            view: &surface.view,
+            format: surface.format,
+            size: surface.size,
+        }
+    }
+    let mut first_encoder = h.device.create_command_encoder(&Default::default());
+    let mut frame = h.ui.begin_frame(&mut text, viewport);
+    frame
+        .record(&all, target(surface, &mut first_encoder))
+        .unwrap();
+    drop(frame);
+    assert_eq!(h.ui.atlas_pages(), 4);
+    assert_eq!(h.ui.abandoned_frames, 1);
+
+    let mut second_encoder = h.device.create_command_encoder(&Default::default());
+    let mut frame = h.ui.begin_frame(&mut text, viewport);
+    let blocked = frame.record(&fresh, target(surface, &mut second_encoder));
+    assert!(
+        matches!(&blocked, Err(RenderError::Backend(m)) if m.contains("frame_submitted")),
+        "{blocked:?}"
+    );
+    // Even though record failed, submit and acknowledge. Include the abandoned
+    // encoder: the fence covers every page reference before recycling any of them.
+    frame.submitted(
+        h.queue
+            .submit([first_encoder.finish(), second_encoder.finish()]),
+    );
+    assert_eq!(
+        h.ui.abandoned_frames, 1,
+        "submitted errors are not abandonments"
+    );
+    let mut encoder = h.device.create_command_encoder(&Default::default());
+    let mut frame = h.ui.begin_frame(&mut text, viewport);
+    frame
+        .record(&fresh, target(surface, &mut encoder))
+        .expect("covering submission released the old references");
+    frame.submitted(h.queue.submit([encoder.finish()]));
+    assert_eq!(h.ui.abandoned_frames, 1);
 }

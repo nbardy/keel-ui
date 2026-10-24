@@ -1,6 +1,6 @@
 use kit_core::kurbo::{Affine, Point, Rect, RoundedRectRadii, Stroke};
 use kit_core::peniko::Brush;
-use kit_core::{Border, Clip, Shadow, Shape};
+use kit_core::{Border, Clip, Redraw, Shadow, Shape};
 use kit_view::{Image, ImageStyle, TextLayoutId};
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -71,9 +71,17 @@ pub enum Draw {
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct DrawList {
     pub items: Vec<Draw>,
+    /// Demand from painter-owned transitions, caret blinking and scrollbar fading.
+    pub redraw: Redraw,
 }
 
 impl DrawList {
+    /// Total demand for this frame. Pass the completed view build, Store and UiMemory
+    /// demands after layout and Router::frame. Input/app changes independently wake the host.
+    pub fn frame_redraw(&self, view: Redraw, store: Redraw, input: Redraw) -> Redraw {
+        self.redraw.earliest(view).earliest(store).earliest(input)
+    }
+
     /// Layer nesting never goes negative and ends at zero.
     pub fn layers_balanced(&self) -> bool {
         let mut depth = 0usize;

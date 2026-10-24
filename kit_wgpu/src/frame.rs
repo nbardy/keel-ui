@@ -1,14 +1,6 @@
-//! One frame of UI as a value: it owns the viewport the frame is laid out and drawn at, the text system's frame
-//! lifecycle, and the glyph-atlas fence, so none of the three can be forgotten or disagree.
-//!
-//! ```ignore
-//! let mut frame = ui.begin_frame(&mut text, viewport);           // text.begin_frame()
-//! let laid = hud.lay_out(&mut layout, frame.text(), viewport)?;   // the same viewport the renderer will use
-//! renderer.render_with(&scene, |overlay| {
-//!     frame.record(&list, FrameTarget { encoder: overlay.encoder, view: overlay.view, .. })
-//! });                                                            // submitted when this returns
-//! drop(frame);                                                   // frame_submitted() + text.end_frame()
-//! ```
+//! A UI frame owns one viewport and the CPU text-frame lifetime. After queue.submit,
+//! call UiFrame::submitted with its submission index, even if record returned an error.
+//! Dropping without submission abandons the frame and keeps its atlas pages referenced.
 
 use crate::{WgpuSurface, WgpuTarget, WgpuUi};
 use kit_core::Viewport;
@@ -25,14 +17,16 @@ pub struct FrameTarget<'a> {
     pub size: (u32, u32),
 }
 
-/// A UI frame in flight. Dropping it is the end of the frame: the atlas learns that everything recorded is submitted
-/// (idempotent, so a frame the surface skipped is fine) and the text system evicts what it no longer needs. Keep it
-/// alive across the scene's submission and drop it after.
-#[must_use = "the frame ends (and the atlas fence runs) when it is dropped"]
+/// A UI frame in flight. Call `submitted` after the submit carrying its commands,
+/// including a partial recording that returned an error. Dropping abandons it:
+/// CPU text cleanup still runs, but atlas pages remain referenced until a later submit
+/// covers all outstanding recordings. Never submit an abandoned encoder after that fence.
+#[must_use = "call submitted after queue.submit; dropping abandons the frame"]
 pub struct UiFrame<'a> {
     gpu: &'a mut WgpuUi,
     text: &'a mut CosmicText,
     viewport: Viewport,
+    submitted: bool,
 }
 
 impl WgpuUi {
@@ -47,11 +41,18 @@ impl WgpuUi {
             gpu: self,
             text,
             viewport,
+            submitted: false,
         }
     }
 }
 
 impl UiFrame<'_> {
+    /// Consume this frame after queue.submit, even when record returned an error.
+    /// The submission must cover every encoder recorded since the preceding fence.
+    pub fn submitted(mut self, _submission: wgpu::SubmissionIndex) {
+        self.gpu.frame_submitted();
+        self.submitted = true;
+    }
     pub fn viewport(&self) -> Viewport {
         self.viewport
     }
@@ -80,7 +81,9 @@ impl UiFrame<'_> {
 
 impl Drop for UiFrame<'_> {
     fn drop(&mut self) {
-        self.gpu.frame_submitted();
+        if !self.submitted {
+            self.gpu.abandoned_frames += 1;
+        }
         self.text.end_frame();
     }
 }

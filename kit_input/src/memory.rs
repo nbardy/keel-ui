@@ -118,6 +118,10 @@ pub struct UiMemory {
     pub(crate) window_focused: bool,
     pub(crate) scroll: crate::scroll::Scrolls,
     pub(crate) focus: Focus,
+    /// Last completed frame's focus, for detecting host requests/claims after view reads.
+    pub(crate) frame_focus: Focus,
+    /// Frame maintenance changed a value the view may already have read. One follow-up build is owed.
+    pub(crate) frame_changed: bool,
     pub(crate) pointers: BTreeMap<PointerId, PointerState>,
     pub(crate) clicks: ClickRun,
     pub(crate) clipboard: Vec<ClipboardRequest>,
@@ -138,6 +142,8 @@ impl UiMemory {
             window_focused: true,
             scroll: crate::scroll::Scrolls::default(),
             focus: Focus::Unfocused,
+            frame_focus: Focus::Unfocused,
+            frame_changed: false,
             pointers: BTreeMap::new(),
             clicks: ClickRun::Nothing,
             clipboard: Vec::new(),
@@ -175,6 +181,11 @@ impl UiMemory {
     /// frame, after the view that reads `drag` was built.
     pub fn end_frame(&mut self) {
         for state in self.pointers.values_mut() {
+            if matches!(state.gesture, Gesture::Drag { .. } | Gesture::Track { .. })
+                && state.frame_prev != state.at
+            {
+                self.frame_changed = true;
+            }
             state.frame_prev = state.at;
         }
     }

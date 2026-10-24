@@ -1,7 +1,7 @@
 use crate::{Draw, DrawList};
 use kit_core::kurbo::{Affine, Ellipse, Point, Rect, RoundedRect, RoundedRectRadii, Vec2};
 use kit_core::peniko::{Brush, Color};
-use kit_core::{Border, Clip, MotionPref, Shadow, Shape, ShapeSpec, Theme, Time};
+use kit_core::{Border, Clip, MotionPref, Redraw, Shadow, Shape, ShapeSpec, Theme, Time};
 use kit_input::{AnimKey, Focus, UiMemory};
 use kit_view::{
     ClipSpec, FieldGeometry, FieldStyle, FieldView, LaidKind, LaidNode, LaidOut, Layer, Paint,
@@ -16,11 +16,15 @@ pub fn paint<Msg>(laid: &LaidOut<Msg>, memory: &UiMemory, theme: &Theme, now: Ti
         theme,
         now,
         out: Vec::new(),
+        redraw: Redraw::Idle,
     };
     p.node(&laid.root, Vec2::ZERO);
     p.portals();
     p.drag_ghosts();
-    DrawList { items: p.out }
+    DrawList {
+        items: p.out,
+        redraw: p.redraw,
+    }
 }
 
 struct Painter<'a, Msg> {
@@ -29,6 +33,7 @@ struct Painter<'a, Msg> {
     theme: &'a Theme,
     now: Time,
     out: Vec<Draw>,
+    redraw: Redraw,
 }
 
 const CARET_BLINK_MS: u128 = 530;
@@ -75,6 +80,9 @@ impl<Msg> Painter<'_, Msg> {
                 let (area, size, now) = ((*id, spec), child.rect.size(), self.now);
                 let (memory, theme) = (self.memory, self.theme);
                 let bars = crate::scrollbar::scrollbars(memory, theme, area, rect, size, now);
+                self.redraw = self
+                    .redraw
+                    .earliest(memory.scrollbar_redraw(*id, spec, rect, size, now));
                 self.out.extend(bars);
                 self.out.push(Draw::PopLayer);
             }
@@ -187,13 +195,16 @@ impl<Msg> Painter<'_, Msg> {
     }
 
     /// Eased 0..1 progress of an animation that started at `key`'s recorded time.
-    fn progress(&self, id: kit_core::WidgetId, key: AnimKey) -> f32 {
+    fn progress(&mut self, id: kit_core::WidgetId, key: AnimKey) -> f32 {
         let Some(start) = self.memory.anim_start(id, key) else {
             return 1.0;
         };
         let total = self.theme.motion.fast();
         if total.is_zero() {
             return 1.0;
+        }
+        if self.now.since(start) < total {
+            self.redraw = Redraw::Now;
         }
         let t = (self.now.since(start).as_secs_f32() / total.as_secs_f32()).clamp(0.0, 1.0);
         t * (2.0 - t) // ease-out quad
@@ -308,7 +319,7 @@ impl<Msg> Painter<'_, Msg> {
     }
 
     /// The caret blinks from its last edit or from gaining focus, and does not blink under reduced motion.
-    fn caret_shown(&self, id: kit_core::WidgetId) -> bool {
+    fn caret_shown(&mut self, id: kit_core::WidgetId) -> bool {
         match self.theme.motion.pref {
             MotionPref::Reduced => true,
             MotionPref::Full => {
@@ -317,7 +328,16 @@ impl<Msg> Painter<'_, Msg> {
                     .anim_start(id, AnimKey::Caret)
                     .max(self.memory.anim_start(id, AnimKey::Focus))
                     .unwrap_or(self.now);
-                (self.now.since(since).as_millis() / CARET_BLINK_MS).is_multiple_of(2)
+                let period = core::time::Duration::from_millis(CARET_BLINK_MS as u64);
+                let elapsed = self.now.since(since);
+                let next = Time(
+                    self.now.0 + period
+                        - core::time::Duration::from_nanos(
+                            (elapsed.as_nanos() % period.as_nanos()) as u64,
+                        ),
+                );
+                self.redraw = self.redraw.earliest(Redraw::At(next));
+                (elapsed.as_millis() / CARET_BLINK_MS).is_multiple_of(2)
             }
         }
     }

@@ -7,12 +7,13 @@ use crate::input::{Drag, Interaction, Unrouted};
 use crate::intent::{Intent, StepIntent};
 use crate::store::{SlotId, Store};
 use core::any::TypeId;
+use core::cell::Cell;
 use core::fmt::Debug;
 use core::hash::Hash;
 use core::marker::PhantomData;
 use core::ops::Deref;
 use core::time::Duration;
-use kit_core::{MotionPref, ScrollView, Time, WidgetId};
+use kit_core::{MotionPref, Redraw, ScrollView, Time, WidgetId};
 use std::rc::Rc;
 
 /// A non-capturing reducer closure `Fn(&mut S, &K, E, &App) -> Act<Ask, E>`, seen through its signature.
@@ -55,6 +56,7 @@ pub struct Cx<'a, A: Host> {
     app: &'a A,
     store: &'a Store<A>,
     input: &'a dyn Interaction,
+    redraw: Cell<Redraw>,
 }
 
 impl<'a, A: Host> Cx<'a, A> {
@@ -65,13 +67,39 @@ impl<'a, A: Host> Cx<'a, A> {
     }
     /// A tree whose interaction reads come from the router's memory after the previous layout.
     pub fn routed(app: &'a A, store: &'a Store<A>, input: &'a dyn Interaction) -> Self {
-        Self { app, store, input }
+        Self {
+            app,
+            store,
+            input,
+            redraw: Cell::new(Redraw::Idle),
+        }
     }
     pub fn app(&self) -> &'a A {
         self.app
     }
+    /// Read an unrestricted clock: conservatively redraw continuously for this view.
     pub fn now(&self) -> Time {
+        self.redraw.set(Redraw::Now);
         self.app.now()
+    }
+    /// Read the clock for output that is constant until `at`. Registers that deadline only
+    /// while it is in the future. After it is reached, the component must register its next
+    /// change (or use `now` if it is animating). This never clears another reader's demand.
+    pub fn redraw_at(&self, at: Time) -> Time {
+        let now = self.app.now();
+        if now < at {
+            self.redraw.set(self.redraw.get().earliest(Redraw::At(at)));
+        }
+        now
+    }
+    /// Demand from this view build; read after the component tree has been built.
+    pub fn redraw(&self) -> Redraw {
+        self.redraw.get()
+    }
+    fn observe_life(&self, key: &impl Ident<A>) {
+        if let Life::Leaving(_) = key.life(self.app) {
+            self.redraw.set(Redraw::Now);
+        }
     }
 
     /// Declare keyed state in place. `step` is the reducer; it is also the declaration's identity (its closure
@@ -120,6 +148,7 @@ impl<'a, A: Host> Cx<'a, A> {
                 "state reducers must not capture: put captured values in the key, the event or the app"
             )
         };
+        self.observe_life(key);
         let id: SlotId<A> = (TypeId::of::<F>(), AnyKey::new(key.clone()));
         let value = match self.store.read::<S>(&id) {
             Some(value) => value,
@@ -163,7 +192,8 @@ impl<'a, A: Host> Cx<'a, A> {
     /// sight shows `target` with no entrance (an entrance is a `Disclosure`). One animated value per key: animate two
     /// things of one key through [`Part`](crate::Part). Zero `over` and `MotionPref::Reduced` show the target at once.
     pub fn animate<K: Ident<A>>(&self, key: &K, target: f32, over: Duration) -> f32 {
-        let now = self.now();
+        self.observe_life(key);
+        let now = self.app.now();
         let id: SlotId<A> = (TypeId::of::<Tween>(), AnyKey::new(key.clone()));
         let tween = match self.store.read::<Tween>(&id) {
             Some(tween) if tween.to == target => tween,
@@ -205,6 +235,7 @@ impl<'a, A: Host> Cx<'a, A> {
     /// The scroll area keyed `WidgetId::of(key)` as last measured. Also ties the router's memory of that area to
     /// the key's life: when the key ends, `Store::take_released` hands its id back for `UiMemory::forget_scrolls`.
     pub fn scroll<K: Ident<A>>(&self, key: &K) -> ScrollView {
+        self.observe_life(key);
         let id = WidgetId::of(key);
         match key.life(self.app) {
             Life::Live => {

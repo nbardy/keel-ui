@@ -1,7 +1,7 @@
 //! Real-GPU harness shared by the kit_wgpu integration tests: a target texture, a `WgpuUi` over it, and readback.
 use kit_paint::{DrawList, RenderError};
 use kit_view::CosmicText;
-use kit_wgpu::{WgpuSurface, WgpuTarget, WgpuUi};
+use kit_wgpu::{FrameTarget, WgpuSurface, WgpuUi};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 pub type Px = [u8; 4];
@@ -79,16 +79,24 @@ impl Harness {
                 ..Default::default()
             });
         }
-        let result = self.ui.render(
+        let viewport = kit_core::Viewport::new(
+            kit_core::kurbo::Size::new(
+                f64::from(self.size.0) / f64::from(self.surface.scale_factor),
+                f64::from(self.size.1) / f64::from(self.surface.scale_factor),
+            ),
+            f64::from(self.surface.scale_factor),
+        );
+        let mut frame = self.ui.begin_frame(text, viewport);
+        let result = frame.record(
             list,
-            text,
-            WgpuTarget {
+            FrameTarget {
                 encoder: &mut encoder,
-                surface: &self.surface,
+                view: &self.surface.view,
+                format: self.surface.format,
+                size: self.size,
             },
         );
-        self.queue.submit([encoder.finish()]);
-        self.ui.frame_submitted();
+        frame.submitted(self.queue.submit([encoder.finish()]));
         result
     }
 

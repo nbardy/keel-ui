@@ -12,7 +12,7 @@
 use crate::hit::{HitPath, hit_test};
 use crate::{DeltaUnit, Gesture, GestureConfig, PointerEvent, PointerKind, Router, UiMemory};
 use kit_core::kurbo::{Rect, Size, Vec2};
-use kit_core::{Axis, ScrollView, Time, WidgetId};
+use kit_core::{Axis, Redraw, ScrollView, Time, WidgetId};
 use kit_view::{
     Bars, LaidKind, LaidNode, LaidOut, Reveal, RevealAlign, RevealTarget, ScrollSpec, Stick,
 };
@@ -219,6 +219,61 @@ pub struct BarView {
 }
 
 impl UiMemory {
+    /// Demand after Router::frame and end_frame: live physics, or one follow-up view
+    /// for focus, scroll measurements/offsets or drag deltas changed after view reads.
+    /// Retained offsets/momentum of absent areas do not keep a host awake.
+    pub fn redraw<Msg>(&self, laid: &LaidOut<Msg>) -> Redraw {
+        if self.frame_changed {
+            return Redraw::Now;
+        }
+        let mut areas = Vec::new();
+        collect(&laid.root, &mut areas);
+        areas
+            .iter()
+            .filter_map(|area| self.scroll.areas.get(&area.id))
+            .fold(Redraw::Idle, |demand, state| {
+                demand.earliest(match state.motion {
+                    Motion::Rest => Redraw::Idle,
+                    Motion::Coast { .. } | Motion::Glide { .. } => Redraw::Now,
+                })
+            })
+    }
+    /// Demand for a drawn area's floating bars (the same geometry/visibility as scroll_bars).
+    pub fn scrollbar_redraw(
+        &self,
+        id: WidgetId,
+        spec: &ScrollSpec,
+        rect: Rect,
+        content: Size,
+        now: Time,
+    ) -> Redraw {
+        let Some(state) = self.scroll.areas.get(&id) else {
+            return Redraw::Idle;
+        };
+        let Moved::At(moved) = state.moved else {
+            return Redraw::Idle;
+        };
+        let fade = Time(moved.0 + std::time::Duration::from_secs_f64(BAR_LINGER));
+        let end = Time(fade.0 + std::time::Duration::from_secs_f64(BAR_FADE));
+        let fading = self
+            .scroll_bars(id, spec, rect, content, now)
+            .iter()
+            .any(|bar| {
+                !bar.hot
+                    && !self
+                        .pointers
+                        .values()
+                        .any(|p| p.kind != PointerKind::Touch && rect.contains(p.at))
+            });
+        if !fading || now >= end {
+            Redraw::Idle
+        } else if now < fade {
+            Redraw::At(fade)
+        } else {
+            Redraw::Now
+        }
+    }
+
     /// The area as last measured, for views that build from it (`kit_state::Interaction::scroll`).
     pub fn scroll_view(&self, id: WidgetId) -> ScrollView {
         match self.scroll.areas.get(&id) {
@@ -510,7 +565,10 @@ impl Router {
     /// still scroll by wheel and drag, but nothing coasts, sticks or reveals. It also applies new focus claims
     /// (`FocusClaim`, keys:), which the fields hear about as `Edit::Focus`/`Blur` on the next routed event.
     pub fn frame<Msg>(&self, laid: &LaidOut<Msg>, memory: &mut UiMemory, now: Time) {
+        memory.frame_changed = memory.focus != memory.frame_focus;
         crate::focus::claim(laid, memory, now);
+        memory.frame_changed |= memory.focus != memory.frame_focus;
+        memory.frame_focus = memory.focus;
         let dt = match memory.scroll.clock {
             Clock::Unstarted => 0.0,
             Clock::At(last) => now.since(last).as_secs_f64().min(MAX_DT),
@@ -520,7 +578,9 @@ impl Router {
         collect(&laid.root, &mut areas);
         for area in areas {
             let target = reveal_target(laid, &area, memory.scroll.offset(area.id));
+            let known = memory.scroll.areas.contains_key(&area.id);
             let state = memory.area(&area);
+            let measured = (state.viewport, state.content);
             // Measured against last frame's max, before the new content moves it.
             let (end_x, end_y) = (
                 state.max.x - state.offset.x <= ARRIVED,
@@ -547,9 +607,12 @@ impl Router {
                 (Stick::End, Motion::Glide { .. }) | (Stick::Free, _) => {}
             }
             state.offset = area.clamp(state.offset);
+            let changed =
+                !known || measured != (state.viewport, state.content) || state.offset != before;
             if state.offset != before {
                 state.moved = Moved::At(now);
             }
+            memory.frame_changed |= changed;
         }
     }
 }

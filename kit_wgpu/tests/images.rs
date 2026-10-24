@@ -12,6 +12,7 @@ use kit_wgpu::WgpuTarget;
 
 fn list(handle: Image) -> DrawList {
     DrawList {
+        redraw: kit_core::Redraw::Idle,
         items: vec![Draw::Image {
             image: handle,
             rect: Rect::new(0.0, 0.0, 16.0, 16.0),

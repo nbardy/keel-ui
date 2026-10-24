@@ -551,11 +551,11 @@ impl Starter {
             format: self.format,
             size,
         };
-        ui.record(&draws, target).map_err(FrameError::Render)?;
+        let recorded = ui.record(&draws, target);
 
-        // 9. One submit for scene and UI; dropping the UI frame after it is the glyph-atlas fence.
-        self.queue.submit([encoder.finish()]);
-        drop(ui);
+        // 9. One submit for scene and UI; acknowledge it even after a recording error.
+        ui.submitted(self.queue.submit([encoder.finish()]));
+        recorded.map_err(FrameError::Render)?;
         Ok(Drawn { laid, text_target })
     }
 }

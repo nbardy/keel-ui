@@ -8,6 +8,7 @@ pub use peniko;
 
 mod id;
 mod key;
+mod redraw;
 mod scroll;
 mod shape;
 mod theme;
@@ -15,6 +16,7 @@ mod units;
 
 pub use id::{Identity, StableHasher, WidgetId};
 pub use key::{Key, Modifiers, NamedKey};
+pub use redraw::Redraw;
 pub use scroll::ScrollView;
 pub use shape::{Axis, Border, Clip, Shadow, Shape, ShapeSpec, Surface};
 pub use theme::{

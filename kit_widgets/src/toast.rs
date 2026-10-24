@@ -75,8 +75,9 @@ fn item<A: Host, K: Ident<A>>(
     if life == Life::Over {
         return None;
     }
+    let now = cx.redraw_at(t.expires);
     let initial = Disclosure::Open {
-        since: Since::At(cx.now()),
+        since: Since::At(now),
     };
     let state = cx.state(
         &key,
@@ -93,13 +94,19 @@ fn item<A: Host, K: Ident<A>>(
         (Life::Live | Life::Leaving(_), value) => value,
         (Life::Over, _) => unreachable!("over leases were filtered"),
     };
-    let (opacity, press) = match disclosure.phase(presence, cx.now()) {
-        Phase::Entering(x) => (
-            Easing::OutQuad.at(x),
-            Press::Sends(state.send(DisclosureEv::Close)),
-        ),
+    let (opacity, press) = match disclosure.phase(presence, now) {
+        Phase::Entering(x) => {
+            cx.now();
+            (
+                Easing::OutQuad.at(x),
+                Press::Sends(state.send(DisclosureEv::Close)),
+            )
+        }
         Phase::Shown => (1.0, Press::Sends(state.send(DisclosureEv::Close))),
-        Phase::Exiting(x) => (1.0 - Easing::OutQuad.at(x), Press::Disabled),
+        Phase::Exiting(x) => {
+            cx.now();
+            (1.0 - Easing::OutQuad.at(x), Press::Disabled)
+        }
         Phase::Gone => return None,
     };
     let style = Style::row().padded_xy(th.spacing.md, th.spacing.sm);

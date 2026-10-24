@@ -60,6 +60,7 @@ const ALL_KINDS: [Kind; 7] = [
 
 fn without(list: &DrawList, dropped: Kind) -> DrawList {
     DrawList {
+        redraw: kit_core::Redraw::Idle,
         items: list
             .items
             .iter()

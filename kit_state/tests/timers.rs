@@ -1,7 +1,8 @@
 //! Timers as data: a reducer returns `Act::wake(at, ev)`, the store keeps one wake-up per key, the host fires due
 //! ones with `wake_due` and sleeps until `Store::next_due`.
+use kit_core::Redraw;
 use kit_core::{MotionPref, Time};
-use kit_state::{Act, Cx, Due, Host, Ident, Life, Store, dispatch, wake_due};
+use kit_state::{Act, Cx, Host, Ident, Life, Store, dispatch, wake_due};
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -80,7 +81,7 @@ fn a_timer_fires_once_at_its_time() {
     at(&mut app, &mut store, 340);
     at(&mut app, &mut store, 400);
     assert_eq!(app.fired, [(1, ms(340))]);
-    assert_eq!(store.next_due(), Due::Idle);
+    assert_eq!(store.next_due(), Redraw::Idle);
 }
 
 /// The host sleeps until the earliest wake-up across every key; re-arming a key replaces its wake-up rather than
@@ -88,14 +89,14 @@ fn a_timer_fires_once_at_its_time() {
 #[test]
 fn the_earliest_due_across_keys_is_reported_and_rearming_replaces() {
     let (mut app, mut store) = (app(), Store::new());
-    assert_eq!(store.next_due(), Due::Idle);
+    assert_eq!(store.next_due(), Redraw::Idle);
     arm(&mut app, &mut store, 1, 500);
     arm(&mut app, &mut store, 2, 200);
-    assert_eq!(store.next_due(), Due::At(ms(200)));
+    assert_eq!(store.next_due(), Redraw::At(ms(200)));
     arm(&mut app, &mut store, 2, 800);
     assert_eq!(
         store.next_due(),
-        Due::At(ms(500)),
+        Redraw::At(ms(500)),
         "row 2's 200 ms wake-up was replaced"
     );
     at(&mut app, &mut store, 1000);
@@ -115,7 +116,7 @@ fn a_timer_is_cancelled_when_its_key_ends() {
     arm(&mut app, &mut store, 2, 300);
     app.gone.insert(1);
     store.collect(&app);
-    assert_eq!(store.next_due(), Due::At(ms(300)));
+    assert_eq!(store.next_due(), Redraw::At(ms(300)));
     at(&mut app, &mut store, 1000);
     assert_eq!(app.fired, [(2, ms(1000))]);
     assert_eq!(

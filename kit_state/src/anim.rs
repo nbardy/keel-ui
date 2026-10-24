@@ -30,6 +30,9 @@ impl Tween {
             over,
         }
     }
+    pub(crate) fn running(&self, now: Time) -> bool {
+        self.from != self.to && now.since(self.start) < self.over
+    }
     /// Shares `presence::progress`, so a zero-length tween is `to` from its first instant (never 0/0).
     pub(crate) fn at(&self, now: Time) -> f32 {
         match progress(now.since(self.start), self.over) {

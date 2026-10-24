@@ -1,12 +1,13 @@
 //! The type-erased state table. Storage is keyed by (declaration TypeId, key); values are `Rc<S>` so a view's handle
 //! stays valid while a reducer mutates (copy-on-write via `Rc::make_mut`).
 use crate::act::Fault;
+use crate::anim::Tween;
 use crate::ident::{AnyKey, Host, Life};
 use crate::intent::ErasedStep;
 use crate::intent::Late;
 use core::any::{Any, TypeId};
-use kit_core::Time;
 use kit_core::WidgetId;
+use kit_core::{MotionPref, Redraw, Time};
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -16,13 +17,6 @@ pub type Slots<A> = HashMap<SlotId<A>, Box<dyn Any>>;
 
 /// How many refused intents the Store remembers. Older ones are dropped from the log but still counted.
 pub const LATE_LOG: usize = 64;
-
-/// When the next wake-up is due. `Idle`: none is pending, a host may sleep until input.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Due {
-    Idle,
-    At(Time),
-}
 
 /// A pending wake-up: the intent that delivers the reducer's event to its slot. One per slot.
 struct Timer<A: Host> {
@@ -120,13 +114,37 @@ impl<A: Host> Store<A> {
         ids.sort();
         ids
     }
-    /// When the earliest pending wake-up is due, across every key.
-    pub fn next_due(&self) -> Due {
+    /// Timer-only deadline, across every key. Idle means no reducer timer is pending;
+    /// use redraw(app) and combine view/input/paint demand before sleeping.
+    pub fn next_due(&self) -> Redraw {
         self.timers
             .iter()
             .map(|timer| timer.at)
             .min()
-            .map_or(Due::Idle, Due::At)
+            .map_or(Redraw::Idle, Redraw::At)
+    }
+    /// Store demand: reducer timers, live tweens and keys retained for their exit.
+    /// Call after building the view, so newly declared/retargeted animations are included.
+    pub fn redraw(&self, app: &A) -> Redraw {
+        let slots = self.slots.borrow();
+        let mut demand = self.next_due();
+        for ((declaration, key), value) in slots.iter() {
+            if let Life::Leaving(_) = key.life(app) {
+                demand = Redraw::Now;
+            }
+            if *declaration == TypeId::of::<Tween>()
+                && app.motion() == MotionPref::Full
+                && slot_value::<Tween>(&**value).running(app.now())
+            {
+                demand = Redraw::Now;
+            }
+        }
+        for key in self.widgets.borrow().keys() {
+            if let Life::Leaving(_) = key.life(app) {
+                demand = Redraw::Now;
+            }
+        }
+        demand
     }
     pub(crate) fn unschedule(&mut self, slot: &SlotId<A>) {
         self.timers.retain(|timer| timer.slot != *slot);

@@ -206,7 +206,7 @@ impl Kit {
 
         let t = Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
-        ui.record(
+        let recorded = ui.record(
             &list,
             FrameTarget {
                 encoder: &mut encoder,
@@ -214,15 +214,14 @@ impl Kit {
                 format: FORMAT,
                 size: (WIDTH, HEIGHT),
             },
-        )
-        .expect("the bench list records");
-        self.gpu.queue.submit([encoder.finish()]);
+        );
+        ui.submitted(self.gpu.queue.submit([encoder.finish()]));
+        recorded.expect("the bench list records");
         self.gpu
             .device
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("GPU poll");
         let gpu_time = t.elapsed();
-        drop(ui);
 
         self.router.frame(&laid, &mut self.memory, app.now());
         self.memory.end_frame();

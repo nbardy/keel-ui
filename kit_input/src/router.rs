@@ -99,6 +99,10 @@ pub struct Router {
 }
 
 impl Router {
+    /// Route against the tree laid out for this frame. Keep that same tree for the
+    /// whole input batch; dispatch this event's messages in order before routing
+    /// the next event. State changes belong to the next frame's view. A keyed
+    /// intent still checks its key's current life at dispatch (Leaving/Over refuse).
     pub fn route<Msg: Clone>(
         &self,
         laid: &LaidOut<Msg>,

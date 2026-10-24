@@ -5,6 +5,7 @@ use kit_view::{Image, ImagePixels, ImageSize, ImageStyle, testing::text_system};
 
 fn draw(image: Image) -> DrawList {
     DrawList {
+        redraw: kit_core::Redraw::Idle,
         items: vec![Draw::Image {
             image,
             rect: Rect::new(0.0, 0.0, 4.0, 4.0),

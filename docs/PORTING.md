@@ -1,11 +1,11 @@
-> Written while building the kit inside the Keel game (a private repository); paths outside this repo, and
-> links to other notes, refer to that game.
+> Written while building the kit inside the Keel game, where several agents ported components in parallel; the
+> "coordinator" below is whoever owns the tree. Commands and paths are this repository's.
 
 # Keel UI: porting an egui component to `kit_widgets` (contract, 2026-10-23)
 
 You port ONE component into ONE file. The infrastructure carries the weight (state, input, focus, popups, text,
-scroll, animation), so a component is short. Start from `keel/crates/kit/kit_widgets/src/template.rs` (about 50 lines)
-and its test `keel/crates/kit/kit_widgets/tests/components/template.rs`.
+scroll, animation), so a component is short. Start from `kit_widgets/src/template.rs` (about 50 lines)
+and its test `kit_widgets/tests/components/template.rs`.
 
 **Infrastructure still landing (as of 2026-10-23): overlay + focus (portal, focus manager), text editing core,
 scroll core.** Use the API as it exists in the tree when you start; read the crate (`kit_state/src/cx.rs`,
@@ -32,7 +32,7 @@ need is missing or awkward, STOP and report it; do not rebuild it inside your fi
 | `response.has_focus()` + `ui.input(\|i\| i.key_pressed(..))` (slider arrows, list navigation, type-ahead) | `Bindings::on_key(\|k: KeyPress\| ..)` returning `KeyAnswer::Handled(msg)` or `KeyAnswer::Pass`: delivered only while THAT control has focus, after the router's Tab and Enter/Space (when `activate` is bound), before arrow focus-walking, Escape and hotkeys; `Pass` means "not my key". A key-bound node is focusable. See `slider.rs`, `listbox.rs`. |
 | `ui.input(\|i\| i.modifiers)` on a click (shift-click extends, cmd-click toggles) | `Bindings::activate_with(\|m: Modifiers\| msg)` (`activate` stays the unmodified message). A click sees the modifiers hosts report with `InputEvent::Modifiers` (every `Key` event updates them too); Enter/Space sees the key's own. |
 | `response.gained_focus()` / `lost_focus()`, Escape in a `TextEdit`, `memory.request_focus(id)` | A field's `on_edit` hears `Edit::Focus`, `Edit::Blur` and `Edit::Escape` (Escape, then Blur) from ANY focus move (press, Tab, Escape, claim, host request). Focus a node from the view with `node.claim_focus(&stamp)` / `Bindings::claim_focus`: edge-triggered per stamp, applied by `Router::frame` (no host call). See `drag_value.rs` (claim on click, cancel on Escape, commit on Blur). |
-| `ctx.request_repaint_after(d)`, a debounce or hold-repeat clock | A reducer returns `Act::wake(at, its_own_event)` (one per key; a later one replaces it; `Act::cancel_wake()` drops it). The host calls `kit_state::wake_due(app, &mut store)` once per frame and may sleep until `store.next_due()` (`Due::{Idle, At(t)}`); wake-ups die with the key's life. See `search_field.rs` (debounce), `stepper.rs` (hold-repeat). |
+| `ctx.request_repaint_after(d)`, a debounce or hold-repeat clock | A reducer returns `Act::wake(at, its_own_event)` (one per key; a later one replaces it; `Act::cancel_wake()` drops it). The host calls `kit_state::wake_due(app, &mut store)` once per frame; the frame's whole demand (`Redraw::{Now, At(t), Idle}`, from `DrawList::frame_redraw`) includes these wake-ups, so a host may sleep until it. Wake-ups die with the key's life. See `search_field.rs` (debounce), `stepper.rs` (hold-repeat). |
 | `ui.memory(\|m\| m.data...)`, `ctx.data` | `cx.state(&key, init, \|s, k, ev, app\| ..)`: inline NON-capturing reducer (a capture does not compile; pass values in the event or the key) |
 | `ctx.animate_bool(id, on)` / `animate_value_with_time` | `cx.animate_bool(&key, on, duration)` / `cx.animate(&Part(key, "knob"), target, d)` (several values per key: `Part`) |
 | `Id`, `Id::new("x").with(i)` | a data key implementing `Ident<App>` (`Life` says when its state dies); node identity `WidgetId::of(&key)` / `.key(&key)` |
@@ -46,8 +46,8 @@ need is missing or awkward, STOP and report it; do not rebuild it inside your fi
 
 ## File rules
 
-- One file: `keel/crates/kit/kit_widgets/src/<name>.rs`, plus its test `keel/crates/kit/kit_widgets/tests/components/<name>.rs`
-  and its goldens in `keel/crates/kit/kit_widgets/tests/golden/<name>_*.png`.
+- One file: `kit_widgets/src/<name>.rs`, plus its test `kit_widgets/tests/components/<name>.rs`
+  and its goldens in `kit_widgets/tests/golden/<name>_*.png`.
 - Edit NO shared file: not `lib.rs`, `common.rs`, `Cargo.toml`, `tests/components/main.rs`, `support.rs`, any other crate.
   The coordinator adds `pub mod <name>;` and `mod <name>;`. Until then you can compile by locally adding those two lines
   and reverting them, or by asking the coordinator. Using `crate::common::{ink, surface, ..}` helpers is fine.
@@ -77,7 +77,7 @@ need is missing or awkward, STOP and report it; do not rebuild it inside your fi
 Use `support::Handle` (see the template test): `Handle::new(app, (w, h), view)`, `.click(Role, label)`,
 `.press_key(Key)`, `.type_text(s)`, `.toggle_of(Role, label)`, `.app()`, `.assert_golden(name)`.
 1. ONE golden per visually distinct state (idle and the main active state are enough). CPU raster with the real Inter
-   font. LOOK at the PNG before blessing (`KIT_BLESS=1 scripts/dev.sh test kit_widgets`); a blank or clipped picture
+   font. LOOK at the PNG before blessing (`KIT_BLESS=1 cargo test -p kit_widgets --test components`); a blank or clipped picture
    is a failure, not a golden.
 2. ONE behaviour test that catches a real bug, named after it: the wrap, the clamp, the snap, the key that must not
    fire while disabled, the intent that must be refused after the key's life ends. Before you finish, break the code
@@ -86,15 +86,13 @@ Use `support::Handle` (see the template test): `Handle::new(app, (w, h), view)`,
 ## Verify
 
 ```
-cd keel
-scripts/dev.sh test kit_widgets              # your tests + the rest
-scripts/dev.sh test kit_view
+cargo test --locked -p kit_widgets           # your tests + the rest
+cargo test --locked -p kit_view
 cargo clippy --locked -p kit_widgets --all-targets -- -D warnings
 cargo fmt --all --check
-scripts/check-no-web-deps.sh                 # native kit has no web-sys/js-sys/wasm-bindgen (also step 2 of check.sh)
 ```
-Only the coordinator runs the full `scripts/check.sh`. Journal your session in `agent_notes/<date>_<topic>.md`.
-Never `git stash/checkout/reset/restore/commit`; other agents edit the same tree.
+CI (`.github/workflows/ci.yml`) also runs the whole workspace, a wasm build, and a check that no kit crate pulls
+`wasm-bindgen`, `js-sys` or `web-sys` into a native build.
 
 ## Worked examples: the pilots (2026-10-23)
 
@@ -112,7 +110,7 @@ Tests: `kit_widgets/tests/components/{checkbox,combo_box,text_field}.rs`; golden
 Infrastructure added by the pilots (already in the tree):
 - `Role::{CheckBox, ComboBox, Option}` and `Toggle::Mixed`, mirrored to ARIA in `host_web/src/kit_mirror.rs`.
 - (2026-10-23, keys/fields/timers) `Bindings::on_key`, `Bindings::activate_with`, `InputEvent::Modifiers`,
-  `Edit::{Focus, Blur, Escape}`, `FocusClaim`/`claim_focus`, `Act::wake`/`wake_due`/`Store::next_due`,
+  `Edit::{Focus, Blur, Escape}`, `FocusClaim`/`claim_focus`, `Act::wake`/`wake_due`/`Store::redraw`,
   `A11y::{named, toggled, Ranged}` and `Role::Slider` (mirrored as ARIA `slider` with `aria-valuenow/min/max`).
   Test hosts: `support::Handle::tick(|app| ..)` is one host frame (wake-ups, layout, `Router::frame`).
 - Router: once a control has keyboard focus (only Tab gives a control focus; a pointer press never does), ArrowDown/ArrowUp

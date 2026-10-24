@@ -82,6 +82,8 @@ pub struct WgpuUi {
     out: Output,
     generation: u64,
     stats: FrameStats,
+    /// Frames dropped without explicit submission (including skipped surfaces).
+    pub abandoned_frames: u64,
 }
 
 impl WgpuUi {
@@ -97,6 +99,7 @@ impl WgpuUi {
             out: Output::of(format),
             generation: 0,
             stats: FrameStats::default(),
+            abandoned_frames: 0,
             gpu,
         }
     }
