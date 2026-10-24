@@ -1,10 +1,10 @@
 //! `virtual_items` through the real router: a 10,000-item list lays out about a screenful of rows, wheel scrolling
 //! shows the right items, and a row's pin follows its item (not its position) across scrolling and inserts above it.
-use crate::support::Handle;
 use kit_core::kurbo::{Point, Vec2};
 use kit_core::{MotionPref, ScrollView, Theme, Time};
 use kit_input::{DeltaUnit, InputEvent};
 use kit_state::{Act, Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{Node, Role, Toggle, column, row};
 use kit_widgets::{Press, Switch, VirtualList, switch, virtual_items};
 use std::cell::Cell;
@@ -101,7 +101,14 @@ fn handle(
     h.scroll_by(0.0); // the first frame builds a stub window; the second has the measured viewport
     h
 }
-impl<V: Fn(&Cx<'_, App>, &Theme) -> Node<Intent<App>>> Handle<App, V> {
+/// Test-local helpers on the shared harness (`kit_test::Handle` is another crate's type, so they are a trait).
+trait ListHandle {
+    fn scroll_by(&mut self, dy: f64);
+    fn click_pin(&mut self, id: u32);
+    fn offset(&self) -> f64;
+    fn built(&self, ids: impl IntoIterator<Item = u32>) -> Vec<u32>;
+}
+impl<V: Fn(&Cx<'_, App>, &Theme) -> Node<Intent<App>>> ListHandle for Handle<App, V> {
     fn scroll_by(&mut self, dy: f64) {
         self.input(InputEvent::Wheel {
             at: Point::new(60.0, 60.0),
