@@ -242,10 +242,34 @@ struct Frame<'a, 'n> {
     viewport: Viewport,
     world: &'a dyn WorldProjector,
     /// Measure contexts: taffy nodes carry an index into this.
-    leaves: Vec<Leaf<'n>>,
+    leaves: Vec<Measured<'n>>,
     slots: Vec<Slot>,
     /// Roots of detached world trees, laid out after the main tree.
     floating: Vec<tf::NodeId>,
+}
+
+/// A leaf and every answer it has given this frame. Taffy asks the same leaf the same question many times per solve
+/// (flex runs several sizing passes per item, and every ancestor row/column re-asks), and each ask through
+/// `CosmicText::layout` builds and hashes a full cache key (text copy, span list, attrs). Measured on the 100-row
+/// bench list (3 text leaves per row): 46 `layout` calls per row per frame, 24 us/row, all cache hits. Remembering
+/// the answer per `Room` makes it one call per distinct room; without it list layout is ~10x slower.
+struct Measured<'n> {
+    leaf: Leaf<'n>,
+    answers: Vec<(Room, Size)>,
+}
+
+impl Measured<'_> {
+    fn measure(&mut self, text: &mut CosmicText, room: Room) -> Size {
+        let room = self.leaf.canonical(room);
+        match self.answers.iter().find(|(asked, _)| *asked == room) {
+            Some((_, size)) => *size,
+            None => {
+                let size = self.leaf.measure(text, room);
+                self.answers.push((room, size));
+                size
+            }
+        }
+    }
 }
 
 /// Built node: either part of its parent's taffy tree or a detached world box.
@@ -257,7 +281,10 @@ enum Built {
 impl<'n> Frame<'_, 'n> {
     fn leaf_node(&mut self, style: tf::Style, leaf: Leaf<'n>) -> tf::NodeId {
         let index = self.leaves.len();
-        self.leaves.push(leaf);
+        self.leaves.push(Measured {
+            leaf,
+            answers: Vec::new(),
+        });
         self.tree
             .new_leaf_with_context(style, index)
             .expect("taffy new_leaf is infallible")
@@ -502,7 +529,7 @@ impl<'n> Frame<'_, 'n> {
     // Solve
 
     fn solve(&mut self, main: Built, text: &mut CosmicText) -> Vec<Placed> {
-        let leaves = &self.leaves;
+        let leaves = &mut self.leaves;
         let mut measure = |input: tf::LayoutInput,
                            _id: tf::NodeId,
                            ctx: Option<&mut usize>,
@@ -514,7 +541,7 @@ impl<'n> Frame<'_, 'n> {
                 |_, _| 0.0,
                 |known, avail| match ctx {
                     None => known.unwrap_or(tf::Size::ZERO),
-                    Some(index) => measure_leaf(&leaves[*index], text, known, avail),
+                    Some(index) => measure_leaf(&mut leaves[*index], text, known, avail),
                 },
             )
         };
@@ -598,7 +625,7 @@ impl<'n> Frame<'_, 'n> {
 
 /// Seconds of taffy measure: exactly one place where `f64` text metrics become `f32` layout input.
 fn measure_leaf(
-    leaf: &Leaf<'_>,
+    leaf: &mut Measured<'_>,
     text: &mut CosmicText,
     known: tf::Size<Option<f32>>,
     avail: tf::Size<tf::AvailableSpace>,

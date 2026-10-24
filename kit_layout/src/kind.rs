@@ -199,6 +199,26 @@ impl Room {
 }
 
 impl Leaf<'_> {
+    /// The room with every distinction this leaf's measure ignores erased, so equal answers share one key: an
+    /// `Exactly` width measures like a `Within` one, and unwrapped text or a fixed-size leaf ignores the room.
+    pub(crate) fn canonical(&self, room: Room) -> Room {
+        let wrap = match self {
+            Leaf::Text { style, .. } => style.wrap,
+            Leaf::Field { field, .. } => field.text.wrap,
+            Leaf::Image(_) | Leaf::Empty => TextWrap::None,
+        };
+        match (wrap, room) {
+            (TextWrap::None, _) => Room::MaxContent,
+            (TextWrap::Glyph | TextWrap::Word | TextWrap::WordOrGlyph, Room::Exactly(w)) => {
+                Room::Within(w)
+            }
+            (
+                TextWrap::Glyph | TextWrap::Word | TextWrap::WordOrGlyph,
+                Room::Within(_) | Room::MinContent | Room::MaxContent,
+            ) => room,
+        }
+    }
+
     /// Content size of the leaf (no padding) when offered `room`.
     pub(crate) fn measure(&self, text: &mut CosmicText, room: Room) -> Size {
         match self {

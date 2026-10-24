@@ -198,6 +198,7 @@ pub struct CosmicText {
     by_key: HashMap<LayoutKey, TextLayoutId>,
     laid: HashMap<TextLayoutId, Laid>,
     next_id: u64,
+    layout_calls: u64,
     rasters: HashMap<CacheKey, GlyphRaster>,
     diagnostics: Diagnostics,
 }
@@ -219,6 +220,7 @@ impl CosmicText {
             by_key: HashMap::new(),
             laid: HashMap::new(),
             next_id: 0,
+            layout_calls: 0,
             rasters: HashMap::new(),
             diagnostics: Diagnostics::default(),
         }
@@ -226,6 +228,13 @@ impl CosmicText {
 
     pub fn diagnostics(&self) -> &Diagnostics {
         &self.diagnostics
+    }
+
+    /// How many times `layout` has been asked, hit or miss. A hit still builds and hashes the full cache key, so
+    /// callers that ask the same question repeatedly within a frame (taffy's measure) should remember the answer;
+    /// tests use this to hold them to it.
+    pub fn layout_calls(&self) -> u64 {
+        self.layout_calls
     }
 
     pub fn cached_layouts(&self) -> usize {
@@ -278,6 +287,7 @@ impl CosmicText {
         style: &TextStyle,
         max_width: MaxWidth,
     ) -> TextLayout {
+        self.layout_calls += 1;
         let resolved = resolve_segments(text, style);
         let key = LayoutKey::new(text, resolved.segments, style, max_width);
         if let Some((id, l)) = self

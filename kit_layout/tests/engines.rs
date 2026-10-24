@@ -212,3 +212,33 @@ fn a_grid_cell_outside_a_grid_is_a_typed_error() {
         Err(LayoutError::CellOutsideGrid { node: 1 })
     ));
 }
+
+/// Regression guard for list layout cost. Taffy asks a leaf for its size many times per solve (flex passes, every
+/// ancestor row and column). Each ask through `CosmicText::layout` builds and hashes a full cache key even on a hit;
+/// the bench list (rows of three text leaves) made 46 calls per row per frame and spent ~24 us/row there. Layout must
+/// remember each leaf's answers so the text system is asked about the same room once.
+#[test]
+fn text_system_is_asked_a_bounded_number_of_times_per_text_leaf() {
+    let style = TextStyle::new(13.0, kit_core::peniko::Color::WHITE);
+
+    let rows = 50;
+    let root = column::<()>((0..rows).map(|i| {
+        row([
+            text(format!("Item {i}"), style.clone()),
+            row([text("On", style.clone())]),
+            row([row([text("Buy", style.clone())])]),
+        ])
+    }));
+    let mut fonts = text_system();
+    let before = fonts.layout_calls();
+    TaffyLayout::new()
+        .layout(
+            root,
+            Viewport::new(Size::new(800.0, 600.0), 1.0),
+            &mut fonts,
+            &NoWorld,
+        )
+        .unwrap();
+    let per_leaf = (fonts.layout_calls() - before) as f64 / (3 * rows) as f64;
+    assert!(per_leaf <= 2.0, "{per_leaf} layout calls per text leaf");
+}
