@@ -44,7 +44,8 @@ is superseded by this implemented image path.
 
 All at this repository's root. No kit crate depends on the game's crates. Dependency direction: `kit_core` <- `kit_view` <-
 `kit_input` / `kit_layout` / `kit_text` / `kit_state` <- `kit_paint` <- backends. Backends never depend on each other,
-except `kit_widgets` which currently depends on `kit_raster` (for tests; see §7 step 7).
+except the dev-only harness `kit_test` (for apps' and the kit's tests), which depends on `kit_raster` for goldens.
+`kit_widgets` depends on `kit_test` only as a dev-dependency.
 
 | Crate | Single job | Depends on | Audit | Flip | Target | Status |
 |---|---|---|---|---|---|---|
@@ -57,7 +58,8 @@ except `kit_widgets` which currently depends on `kit_raster` (for tests; see §7
 | `kit_paint` | `Node` + layout -> `DrawList` (`Fill`, `Stroke`, `RoundRect`, `Glyphs`, `Caret`, `Image`, `PushLayer`/`PopLayer`) | kit_core, kit_view, kit_input | 597 | 574 | ~375 | BUILT; image and caret draws are live; no Custom/nine-slice/renderer trait |
 | `kit_wgpu` | Draw a `DrawList` into the host's encoder (SDF quads, lyon paths, glyph atlas) | kit_core, kit_view, kit_paint, lyon, etagere, wgpu | 3,216 + 244 WGSL | 2,365 | ~1,830 + 150 | BUILT; glyph atlas and image registries; no gradient/custom/stencil/blend paths |
 | `kit_raster` | tiny-skia reference renderer, `golden` harness, parity scenes. **Dev only** | kit_core, kit_view, kit_paint, kit_input, tiny-skia | 2,111 | 1,514 | ~1,500 (~915 of it test infra) | BUILT |
-| `kit_widgets` | The widgets the game uses: `Ui`, `button`, `card`, `caption`, `panel`, `well`, `space`, `gauge`, `Icon` | kit_core, kit_view, kit_layout, kit_paint, kit_input (+ kit_raster) | 1,963 | 3,953 | ~615 | BUILT; dead widgets (ability/cooldown, slots, tabs/list, tooltip, floats, nine-slice, team) already removed in tree |
+| `kit_test` | Test driver for components and apps: `Handle` (real router, real layout and fonts, controls found by role and label, `tick`, CPU goldens). **Dev only**. Moved out of `kit_widgets/tests/components/support.rs` unchanged, plus `with_golden_dir` | kit_core, kit_view, kit_state, kit_input, kit_layout, kit_paint, kit_raster | new | n/a | n/a | BUILT |
+| `kit_widgets` | The widgets the game uses: `Ui`, `button`, `card`, `caption`, `panel`, `well`, `space`, `gauge`, `Icon` | kit_core, kit_view, kit_layout, kit_paint, kit_input (dev: kit_test) | 1,963 | 3,953 | ~615 | BUILT; dead widgets (ability/cooldown, slots, tabs/list, tooltip, floats, nine-slice, team) already removed in tree |
 | `kit_anim` | (was tweens/springs) | - | 225 | gone | 0 (~20 easing -> `kit_state`) | Directory removed; `Easing` now in `kit_state` |
 
 Totals (audit): 14,153 -> ~8,275 including dev-only `kit_raster`; **shipped** 12,042 -> ~6,775; plus microlib ~700 =
@@ -179,6 +181,12 @@ nine-slice are unsupported. Rounded image corners are coverage of the image itse
 Principle (from the repo's testing rules): every test names the bug it catches; prefer one real-fixture test to many
 mocks; a pixel assertion is trusted only after a mutant proves it can fail.
 
+Test layout: component tests are `kit_widgets/tests/components/<name>.rs`, one module per component, listed in
+`main.rs`; goldens are in `kit_widgets/tests/golden/`. They drive the components through `kit_test::Handle` (the
+harness is its own crate so an app can use the same driver; see its crate doc). `tests/common/` holds the helpers that
+`behaviour.rs` uses, separate from `Handle`. App tests use `kit_test` as a dev-dependency and keep goldens in their
+own `tests/golden/`.
+
 | Layer | Test | Where | Bug it catches |
 |---|---|---|---|
 | HUD goldens | Pixel goldens of the **real** captain HUD (`Hud::build` -> taffy -> paint -> `kit_raster`, `BoxText` so geometry/colour/layering are pinned, not glyph shapes). Bless with `KIT_BLESS=1` | `keel/games/game_client/tests/hud_golden.rs`, PNGs in `tests/golden/` (26 at the flip: the in-match HUD, every page in `screens.rs`, social dock, station consoles) | A slimming or restyle that changes how any button/card/caption/panel/gauge draws. Before this, all kit_widgets goldens exercised dead widgets (audit trap). CPU only: a GPU twin would make `kit_wgpu` depend on `game_client` |
@@ -207,7 +215,7 @@ Each step keeps `check.sh` and the kit-hud/versus/inventory URL stages green. St
 | 4 | `taffy::Style` on `Node`; drop `LayoutEngine` trait; one percent constructor + test | `kit_layout` 1,224 -> ~710; Style translation 197 -> ~45 | Not started |
 | 5 | cosmic-text types through kit_view / kit_text / backends; delete `NullText` and the `TextSystem` seam; re-baseline goldens on the Inter subset | `kit_text` 844 -> ~400; `kit_view` text.rs/style.rs mirror types gone | Not started |
 | 6 | `kit_state` read/track/ledger; `TextValue` on cosmic `Editor`; **port the plan tray** | microlib ~700 | `state`/`derive`/life/presence BUILT; port not started |
-| 7 | Optional: fold `kit_paint` into `kit_view`; split `LaidNode` into controls and containers (cuts ~8 copies of an 11-arm `LaidKind` match); single `StableHasher` (kit_core and keel_math duplicate it); `kit_widgets` stops depending on `kit_raster` | | Not started |
+| 7 | Optional: fold `kit_paint` into `kit_view`; split `LaidNode` into controls and containers (cuts ~8 copies of an 11-arm `LaidKind` match); single `StableHasher` (kit_core and keel_math duplicate it); `kit_widgets` stops depending on `kit_raster` (done 2026-10-24: the harness is the dev-only `kit_test`) | | Done |
 
 Traps that must be handled inside the step, not after:
 

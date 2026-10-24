@@ -1,8 +1,8 @@
 //! Combo box: goldens closed and open (a long, scrolling list), the choose/dismiss rules, and keyboard walking.
-use crate::support::{Handle, TestApp};
 use kit_core::kurbo::Point;
 use kit_core::{Key, NamedKey, Theme};
 use kit_state::{Act, Cx, Ident, Intent, Life};
+use kit_test::{Handle, TestApp};
 use kit_view::{Node, Role, Toggle, row};
 use kit_widgets::{Check, Checkbox, ComboBox, Press, checkbox, combo_box};
 

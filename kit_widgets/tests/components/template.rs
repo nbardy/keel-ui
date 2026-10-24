@@ -1,6 +1,6 @@
 //! Template component test: one golden and one behaviour test that catches a real bug. Copy as `<name>.rs`.
-use crate::support::{Handle, TestApp};
 use kit_state::{Cx, Ident, Life};
+use kit_test::{Handle, TestApp};
 use kit_view::{Node, Role, Toggle};
 use kit_widgets::template::{Tally, tally};
 

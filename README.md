@@ -419,6 +419,7 @@ game that uses it, UI included, is 2.16 MB gzipped as wasm.
 | `kit_paint` | `DrawList` and the painter |
 | `kit_wgpu` | the GPU backend that records into your encoder (lyon, etagere) |
 | `kit_raster` | CPU backend on tiny-skia for golden and parity tests (dev-only) |
+| `kit_test` | the test driver: `Handle` drives a real view by role and label through the real router, and checks goldens (dev-only, for the kit and for apps) |
 | `kit_widgets` | the components; short, styled by theme tokens, meant to be copied |
 | `kit_winit` | winit window events to `InputEvent`s, IME area, arboard clipboard; the `starter` example |
 
@@ -431,6 +432,9 @@ cargo test -p kit_widgets --test components   # every component, driven by click
 cargo test -p kit_wgpu                        # CPU-vs-GPU per-pixel parity (needs a GPU adapter)
 cargo test --workspace                        # everything
 ```
+
+Apps test their own components the same way: add `kit_test` as a dev-dependency and drive your views with
+`kit_test::Handle` (`click`, `press_key`, `type_text`, `tick`, `assert_golden`). Its crate docs have a small example.
 
 ## Further reading
 

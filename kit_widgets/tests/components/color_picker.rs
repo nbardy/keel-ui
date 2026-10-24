@@ -1,9 +1,9 @@
 //! HSV conversion, typed parse failures, popup/editor behavior and captured pointer picking.
-use crate::support::Handle;
 use kit_core::kurbo::Point;
 use kit_core::{Key, MotionPref, NamedKey, Theme, Time};
 use kit_input::{InputEvent, Modifiers, Phase, PointerEvent, PointerId, PointerKind};
 use kit_state::{Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{Node, Role, Toggle};
 use kit_widgets::color_picker::{ColorChanged, ColorPicker, HexError, Hsv};
 use kit_widgets::color_picker::{color_picker, hsv_to_rgb, parse_hex, rgb_to_hsv};

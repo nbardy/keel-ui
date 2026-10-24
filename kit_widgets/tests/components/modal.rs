@@ -1,7 +1,7 @@
 //! Modal focus scope, caller-owned dismissal, and visible dialog states.
-use crate::support::{Asked, Handle, TestApp};
 use kit_core::{Key, NamedKey, Theme, WidgetId};
 use kit_state::{Act, Cx, Ident, Intent, Life};
+use kit_test::{Asked, Handle, TestApp};
 use kit_view::{A11y, Bindings, Node, Role, TextStyle, Toggle, column, interactive, nothing, text};
 use kit_widgets::modal::{Action, Modal, modal, primary_action_id};
 
@@ -128,7 +128,7 @@ fn host_initial_focus_on_primary_action_activates_it_without_tab() {
     use kit_layout::TaffyLayout;
     use kit_state::{Store, dispatch};
     use kit_view::{NoWorld, testing::text_system};
-    let (mut app, mut store, theme) = (TestApp::new(), Store::new(), crate::support::theme());
+    let (mut app, mut store, theme) = (TestApp::new(), Store::new(), kit_test::theme());
     let viewport = Viewport::new(kit_core::kurbo::Size::new(420.0, 240.0), 1.0);
     let laid = TaffyLayout::new()
         .layout(

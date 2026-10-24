@@ -1,8 +1,8 @@
 //! Toast deadlines, presence, lease collection, queue limits and pointer dismissal.
-use crate::support::Handle;
 use core::time::Duration;
 use kit_core::{MotionPref, Theme, Time, WidgetId};
 use kit_state::{Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{A11y, Bindings, Node, Role, Style, Toggle, column, interactive, row, text};
 use kit_widgets::toast::{Toast, ToastStack, toast};
 

@@ -1,13 +1,37 @@
-//! Test support for ported components: render to a CPU golden, drive by what a player sees, check goldens.
+//! Drive a Keel UI component the way a player does, and check what it draws.
 //!
-//! `Handle` owns a real app, a real `Store`, the real Inter font and the real router. `click`/`press_key`/`type_text`
-//! route a frame’s batch against the retained tree, dispatch every event’s intents in order,
-//! then rebuild the next frame’s view. Controls are addressed by (Role, accessible label), never by number.
+//! `Handle` owns a real app, a real `Store`, the real Inter font and the real router. `click`, `press_key` and
+//! `type_text` route a frame’s batch against the retained tree, dispatch every event’s intents in order, then rebuild
+//! the next frame’s view. Controls are addressed by (Role, accessible label), never by number, and a control that is
+//! not on screen panics with its name, so a typo cannot pass as a no-op.
 //!
-//! The loop is a host's: the view reads the router's memory (`Cx::routed`, so `cx.hovered/pressed/focused` and
+//! The loop is a host’s: the view reads the router’s memory (`Cx::routed`, so `cx.hovered/pressed/focused` and
 //! `cx.scroll` are live), and every layout is followed by `Router::frame` (scroll measurement, reveal, stick) and
 //! `UiMemory::end_frame`. The router uses `Platform::Other` (Ctrl is the command key) on every OS, so a test that
 //! presses Ctrl+V means the same thing on a Mac as on CI.
+//!
+//! Use it from an app's own tests, the same way the kit tests its components:
+//!
+//! ```
+//! use kit_core::{Theme, WidgetId};
+//! use kit_state::{Cx, Host, Intent};
+//! use kit_test::{Asked, Handle, TestApp};
+//! use kit_view::{A11y, Bindings, Node, Role, TextStyle, Toggle, interactive, text};
+//!
+//! fn view(_cx: &Cx<'_, TestApp>, theme: &Theme) -> Node<Intent<TestApp>> {
+//!     let face = text("Save", TextStyle::new(14.0, theme.colors.text));
+//!     let a11y = A11y::Labeled { role: Role::Button, label: "Save".into(), toggle: Toggle::NotToggle };
+//!     let on_press = Bindings::activate(Intent::Ask(Asked("saved".into())));
+//!     interactive(WidgetId::of(&"save"), on_press, a11y, face)
+//! }
+//!
+//! let mut h = Handle::new(TestApp::new(), (160.0, 60.0), view);
+//! h.click(Role::Button, "Save");
+//! assert_eq!(h.app().asked, [Asked("saved".into())]);
+//! ```
+//!
+//! Goldens are PNGs in `tests/golden/` of the package under test (`cargo test` runs there). `KIT_BLESS=1` writes
+//! them; look at a new picture before blessing it. Use `Handle::with_golden_dir` to put them elsewhere.
 use kit_core::kurbo::Point;
 use kit_core::kurbo::Size;
 use kit_core::peniko::Color;
@@ -23,27 +47,27 @@ use kit_state::{Cx, Host, Intent, Store, dispatch, wake_due};
 use kit_view::testing::{control, text_system};
 use kit_view::{CosmicText, LaidKind, LaidOut, NoWorld, Node, Role, Semantic, SemanticState};
 use kit_view::{Toggle, semantics};
+use std::path::PathBuf;
 
 pub fn theme() -> Theme {
     Theme::new(ColorVision::Normal, MotionPref::Full)
 }
 
-/// What a component asked the host for, as text. A local type, so a test can write `impl From<ItsAsk> for Asked`
-/// (the orphan rule forbids `From<..> for String`).
+/// What a component asked the host for, as text. A test whose widget events must convert into its ask
+/// (`impl From<ItsEvent> for Asked`) cannot use this type: the orphan rule forbids that impl. It defines its own ask
+/// type and host instead.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Asked(pub String);
 
 /// The smallest host: a clock and what its components asked for.
+#[derive(Default)]
 pub struct TestApp {
     pub now: Time,
     pub asked: Vec<Asked>,
 }
 impl TestApp {
     pub fn new() -> Self {
-        Self {
-            now: Time::default(),
-            asked: Vec::new(),
-        }
+        Self::default()
     }
 }
 impl Host for TestApp {
@@ -71,6 +95,7 @@ pub struct Handle<A: Host, V> {
     memory: UiMemory,
     router: Router,
     view_redraw: kit_core::Redraw,
+    golden_dir: PathBuf,
 }
 
 impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
@@ -94,7 +119,15 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
             memory,
             router,
             view_redraw,
+            golden_dir: PathBuf::from("tests/golden"),
         }
+    }
+
+    /// Where `assert_golden` reads and writes PNGs. The default, `tests/golden`, is relative to the working
+    /// directory, which `cargo test` sets to the package root.
+    pub fn with_golden_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.golden_dir = dir.into();
+        self
     }
 
     pub fn app(&self) -> &A {
@@ -274,9 +307,13 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
         RasterUi::new()
             .render(&list, &mut self.text, &mut pixmap)
             .expect("draw list renders");
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
-        if let Err(e) = golden::compare(&dir, name, &pixmap, Tolerance::ROUNDING, Mode::from_env())
-        {
+        if let Err(e) = golden::compare(
+            &self.golden_dir,
+            name,
+            &pixmap,
+            Tolerance::ROUNDING,
+            Mode::from_env(),
+        ) {
             panic!("golden `{name}`: {e}");
         }
     }

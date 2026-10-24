@@ -1,10 +1,10 @@
 //! Tooltip timing, rich content, and viewport-edge placement through the real router.
-use crate::support::Handle;
 use core::time::Duration;
 use kit_core::kurbo::Point;
 use kit_core::{MotionPref, Theme, Time, WidgetId};
 use kit_input::{InputEvent, Phase, PointerEvent, PointerId, PointerKind};
 use kit_state::{Act, Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{A11y, Bindings, Node, Role, TextStyle, Toggle, Weight, column, disabled, text};
 use kit_widgets::tooltip::{Tooltip, tooltip};
 use std::cell::Cell;

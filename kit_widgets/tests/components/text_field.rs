@@ -1,17 +1,37 @@
 //! Text field and area: goldens (placeholders, then filled with a focused caret and a wrapped area), and the
 //! submit/stale-edit rules.
-use crate::support::{Asked, Handle, TestApp};
-use kit_core::{Key, NamedKey, Theme};
+use kit_core::{Key, MotionPref, NamedKey, Theme, Time};
 use kit_input::{ClipboardRequest, InputEvent, Modifiers};
-use kit_state::{Cx, Ident, Intent, Life};
+use kit_state::{Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{Availability, Node, Role, column};
 use kit_widgets::{Submitted, TextArea, TextField, text_area, text_field};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Id(&'static str);
-impl Ident<TestApp> for Id {
-    fn life(&self, _: &TestApp) -> Life {
+impl Ident<App> for Id {
+    fn life(&self, _: &App) -> Life {
         Life::Live
+    }
+}
+/// This file's host, not `kit_test::TestApp`: its ask must be local for `impl From<Submitted<Id>>` (the orphan rule
+/// forbids that impl for `kit_test::Asked`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Asked(String);
+struct App {
+    now: Time,
+    asked: Vec<Asked>,
+}
+impl Host for App {
+    type Ask = Asked;
+    fn now(&self) -> Time {
+        self.now
+    }
+    fn motion(&self) -> MotionPref {
+        MotionPref::Full
+    }
+    fn ask(&mut self, ask: Asked) {
+        self.asked.push(ask);
     }
 }
 impl From<Submitted<Id>> for Asked {
@@ -20,7 +40,7 @@ impl From<Submitted<Id>> for Asked {
     }
 }
 
-fn view(cx: &Cx<'_, TestApp>, theme: &Theme) -> Node<Intent<TestApp>> {
+fn view(cx: &Cx<'_, App>, theme: &Theme) -> Node<Intent<App>> {
     let name = TextField {
         theme,
         key: Id("name"),
@@ -52,8 +72,15 @@ fn view(cx: &Cx<'_, TestApp>, theme: &Theme) -> Node<Intent<TestApp>> {
     .pad(8.0)
 }
 
-fn handle() -> Handle<TestApp, impl Fn(&Cx<'_, TestApp>, &Theme) -> Node<Intent<TestApp>>> {
-    Handle::new(TestApp::new(), (300.0, 230.0), view)
+fn handle() -> Handle<App, impl Fn(&Cx<'_, App>, &Theme) -> Node<Intent<App>>> {
+    Handle::new(
+        App {
+            now: Time::default(),
+            asked: Vec::new(),
+        },
+        (300.0, 230.0),
+        view,
+    )
 }
 
 #[test]

@@ -4,8 +4,8 @@
 //! It guards the two claims the README leads with: local state declared inside a loop follows its DATA key when the
 //! list reorders (a hook-order or position-keyed store would move the pin to the wrong row), and a key's `life`
 //! collects its state when the server stops listing it.
-use crate::support::Handle;
 use kit_core::{MotionPref, Time};
+use kit_test::Handle;
 use kit_view::{Role, Toggle};
 use kit_widgets::{Icon, Ink, PathEl};
 

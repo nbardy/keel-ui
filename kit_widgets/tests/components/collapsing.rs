@@ -1,10 +1,10 @@
 //! Lazy bodies, data identity across reorder, and real intrinsic-height/opacity transitions.
-use crate::support::{Handle, theme};
 use kit_core::kurbo::Size;
 use kit_core::{Key, MotionPref, NamedKey, Theme, Time, Viewport, WidgetId};
 use kit_input::InputEvent;
 use kit_layout::TaffyLayout;
 use kit_state::{Cx, Host, Ident, Intent, Life, Store, dispatch};
+use kit_test::{Handle, theme};
 use kit_view::testing::{control, text_system};
 use kit_view::{A11y, Bindings, LaidKind, LaidOut, NoWorld, Node, Role, TextStyle, Toggle};
 use kit_view::{column, interactive, text};

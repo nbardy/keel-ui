@@ -1,8 +1,8 @@
 //! Keyed ranges, goldens, and the native keyboard/modifier path (real keys, shift/cmd-click through the router).
-use crate::support::Handle;
 use kit_core::{Key, MotionPref, NamedKey, ScrollView, Theme, Time};
 use kit_input::{InputEvent, Modifiers};
 use kit_state::{Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{A11y, Bindings, Node, Role, Toggle, column, interactive, row, text};
 use kit_widgets::listbox::{Gesture, Input, Listbox, Mode, Selection, listbox};
 use std::{cell::Cell, rc::Rc, time::Duration};

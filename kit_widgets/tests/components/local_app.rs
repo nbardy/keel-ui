@@ -4,8 +4,8 @@
 //! It guards the claim the example makes: the app owns the values, and a control shows what the app holds, not what
 //! the control last sent. An app that refuses a command (here: speed above 2x while recording) keeps the slider where it
 //! was.
-use crate::support::Handle;
 use kit_core::{Key, MotionPref, NamedKey, Time};
+use kit_test::Handle;
 use kit_view::Role;
 use kit_widgets::{Icon, Ink, PathEl};
 

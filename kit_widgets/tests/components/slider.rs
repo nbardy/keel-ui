@@ -1,10 +1,10 @@
 //! Slider goldens and the clamp/step rule under a real captured drag through the router.
-use crate::support::Handle;
 use core::ops::RangeInclusive;
 use kit_core::kurbo::Point;
 use kit_core::{Key, MotionPref, NamedKey, Theme, Time};
 use kit_input::{InputEvent, Phase, PointerEvent, PointerId, PointerKind};
 use kit_state::{Cx, Host, Intent};
+use kit_test::Handle;
 use kit_view::{Node, RangeValue, Role, SemanticValue};
 use kit_widgets::slider::Step;
 use kit_widgets::{Slider, slider};

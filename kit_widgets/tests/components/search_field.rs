@@ -1,7 +1,7 @@
 //! Search behaviour through real text routing; the debounce is a kit wake-up the test host fires per frame.
-use crate::support::{Asked, Handle};
 use kit_core::{Key, MotionPref, NamedKey, Theme, Time};
 use kit_state::{Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{Node, Role};
 use kit_widgets::search_field::{SearchChanged, SearchField, search_field};
 use std::cell::Cell;
@@ -14,6 +14,9 @@ impl Ident<App> for Id {
         Life::Live
     }
 }
+/// Local, because the orphan rule forbids `impl From<SearchChanged<Id>> for kit_test::Asked` here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Asked(String);
 impl From<SearchChanged<Id>> for Asked {
     fn from(change: SearchChanged<Id>) -> Self {
         Asked(change.text)

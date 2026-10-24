@@ -1,9 +1,9 @@
 //! Table regressions through real routing, layout, state dispatch and Inter rasterization.
-use crate::support::{Asked, Handle, TestApp};
 use kit_core::kurbo::{Point, Vec2};
 use kit_core::{Key, NamedKey, Theme};
 use kit_input::{DeltaUnit, InputEvent};
 use kit_state::{Act, Cx, Ident, Intent, Life};
+use kit_test::{Asked, Handle, TestApp};
 use kit_view::{Node, Role, Toggle};
 use kit_widgets::table::{Column, Selection, Sort, Sorting, Table, Width, table};
 

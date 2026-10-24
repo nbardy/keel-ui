@@ -19,6 +19,6 @@ kit_state.workspace = true
 
 [dev-dependencies]
 kit_layout.workspace = true
-kit_raster.workspace = true
+kit_test.workspace = true
 kit_paint.workspace = true
 kit_input.workspace = true

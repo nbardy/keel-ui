@@ -1016,6 +1016,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kit_test"
+version = "0.1.0"
+dependencies = [
+ "kit_core",
+ "kit_input",
+ "kit_layout",
+ "kit_paint",
+ "kit_raster",
+ "kit_state",
+ "kit_view",
+]
+
+[[package]]
 name = "kit_text"
 version = "0.1.0"
 dependencies = [
@@ -1058,8 +1071,8 @@ dependencies = [
  "kit_input",
  "kit_layout",
  "kit_paint",
- "kit_raster",
  "kit_state",
+ "kit_test",
  "kit_view",
 ]
 

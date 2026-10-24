@@ -1,10 +1,10 @@
 //! Host scheduling contract checked against complete rendered component frames.
-use super::support::Handle;
 use kit_core::kurbo::{Point, Size};
 use kit_core::peniko::Brush;
 use kit_core::{Axis, Key, MotionPref, NamedKey, Redraw, Theme, Time, WidgetId};
 use kit_input::{InputEvent, Phase, PointerEvent, PointerId, PointerKind};
 use kit_state::{Act, Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{A11y, Availability, Bindings, Node, Role, ScrollSpec, Style, TextStyle};
 use kit_view::{column, interactive, layer, nothing, rect, scroll_area, text};
 use kit_widgets::{Submitted, TextField, Toast, ToastStack, Tooltip, text_field, toast, tooltip};

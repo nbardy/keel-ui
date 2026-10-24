@@ -1,11 +1,11 @@
 //! Stepper goldens and the hold-repeat, driven like a host: real router presses, `Handle::tick` frames that fire the
 //! kit wake-ups (`kit_state::wake_due`) the stepper schedules.
-use crate::support::{Handle, TestApp};
 use kit_core::Redraw;
 use kit_core::kurbo::Point;
 use kit_core::{Key, NamedKey, Theme, Time};
 use kit_input::{InputEvent, Phase, PointerEvent, PointerId, PointerKind};
 use kit_state::{Cx, Host, Ident, Intent, Life};
+use kit_test::{Handle, TestApp};
 use kit_view::{Node, Role, SemanticState};
 use kit_widgets::stepper::{Stepper, stepper};
 use std::time::Duration;

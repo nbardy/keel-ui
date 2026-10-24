@@ -1,11 +1,11 @@
 //! Switch goldens, keyboard/disabled rules, and real laid-out knob positions over host time.
-use crate::support::{Handle, theme};
 use core::cell::Cell;
 use kit_core::kurbo::{Rect, Size};
 use kit_core::{Key, MotionPref, NamedKey, ShapeSpec, Theme, Time, Viewport};
 use kit_input::InputEvent;
 use kit_layout::TaffyLayout;
 use kit_state::{Cx, Host, Ident, Intent, Life};
+use kit_test::{Handle, theme};
 use kit_view::testing::{control, text_system};
 use kit_view::{LaidKind, NoWorld, Node, Role, Toggle, column};
 use kit_widgets::Press;

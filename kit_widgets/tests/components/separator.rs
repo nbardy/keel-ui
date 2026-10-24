@@ -1,9 +1,9 @@
 //! Separator goldens and a regression guard for cross-axis stretch in a centred row.
-use crate::support::{Handle, TestApp, theme};
 use kit_core::kurbo::Size;
 use kit_core::{Theme, Viewport};
 use kit_layout::TaffyLayout;
 use kit_state::{Cx, Intent};
+use kit_test::{Handle, TestApp, theme};
 use kit_view::taffy::AlignItems;
 use kit_view::testing::text_system;
 use kit_view::{NoWorld, Node, TextStyle, column, row, text};

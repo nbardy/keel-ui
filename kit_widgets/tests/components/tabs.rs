@@ -1,8 +1,8 @@
 //! Tabs: wrapped navigation, caller-owned selection and animated indicators.
-use crate::support::Handle;
 use kit_core::{Key, MotionPref, NamedKey, Theme, Time};
 use kit_input::InputEvent;
 use kit_state::{Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{Node, Role, Toggle};
 use kit_widgets::tabs::{Tabs, tabs};
 use std::{cell::Cell, rc::Rc, time::Duration};

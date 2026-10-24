@@ -1,7 +1,7 @@
 //! Radio: controlled values, disabled options and existing router keyboard navigation.
-use crate::support::{Asked, Handle, TestApp};
 use kit_core::{Key, NamedKey, Theme};
 use kit_state::{Cx, Ident, Intent, Life};
+use kit_test::{Asked, Handle, TestApp};
 use kit_view::{Availability, Node, Role, Toggle};
 use kit_widgets::radio::{Radio, RadioOption, radio};
 

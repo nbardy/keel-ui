@@ -1,10 +1,10 @@
 //! Real pointer drags and clicks, typing, Enter, Escape and Tab: no host duties remain (the field claims focus and
 //! hears Escape/Blur itself).
-use crate::support::Handle;
 use kit_core::kurbo::Point;
 use kit_core::{Key, MotionPref, NamedKey, Theme, Time};
 use kit_input::{InputEvent, Modifiers, Phase, PointerEvent, PointerId, PointerKind};
 use kit_state::{Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{Node, Role, column};
 use kit_widgets::drag_value::{DragValue, DragValueChanged, TypedError, drag_value};
 

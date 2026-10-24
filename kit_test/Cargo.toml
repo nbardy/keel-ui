@@ -1,0 +1,22 @@
+[package]
+name = "kit_test"
+description = "Keel UI kit test driver: drive real components by role and label through the real router, lay them out with real fonts, check CPU goldens. A native dev tool for apps that use the kit."
+keywords = ["gui", "ui", "testing", "gamedev"]
+categories = ["gui", "game-development", "development-tools::testing"]
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kit_core.workspace = true
+kit_view.workspace = true
+kit_state.workspace = true
+kit_input.workspace = true
+kit_layout.workspace = true
+kit_paint.workspace = true
+kit_raster.workspace = true

@@ -1,7 +1,7 @@
 //! Checkbox: golden of the three checks plus a disabled one, and the focus rule for Space.
-use crate::support::{Handle, TestApp};
 use kit_core::{Key, NamedKey, Theme};
 use kit_state::{Act, Cx, Ident, Intent, Life};
+use kit_test::{Handle, TestApp};
 use kit_view::{Node, Role, Toggle, column};
 use kit_widgets::{Check, Checkbox, Press, checkbox};
 

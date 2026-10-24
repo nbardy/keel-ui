@@ -1,7 +1,7 @@
 //! Segmented selection: real routed input and host-clock-driven background movement.
-use crate::support::Handle;
 use kit_core::{Key, MotionPref, NamedKey, Theme, Time};
 use kit_state::{Cx, Host, Ident, Intent, Life};
+use kit_test::Handle;
 use kit_view::{Node, Placement, Role, Toggle};
 use kit_widgets::segmented::{Segmented, segmented};
 use std::{cell::Cell, time::Duration};

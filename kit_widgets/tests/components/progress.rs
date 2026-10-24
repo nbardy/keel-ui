@@ -1,8 +1,8 @@
 //! Progress rejects invalid values; spinner geometry follows host time unless reduced motion is requested.
-use crate::support::{Handle, TestApp, theme};
 use kit_core::kurbo::BezPath;
 use kit_core::{MotionPref, ShapeSpec, Theme, Time};
 use kit_state::{Cx, Host, Intent, Store};
+use kit_test::{Handle, TestApp, theme};
 use kit_view::{Node, column};
 use kit_widgets::progress::{ProgressBar, ProgressError, Spinner, progress, spinner};
 use std::time::Duration;
