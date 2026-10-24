@@ -327,7 +327,7 @@ impl Kept {
         plan: Vec<Entry<'n>>,
     ) -> (Reuse, Vec<Measured<'n>>) {
         match self.shape(text, &plan) {
-            Shape::Same => self.patch(tree, plan),
+            Shape::Same => self.patch(tree, &plan),
             Shape::Changed => self.rebuild(tree, text, plan),
         }
     }
@@ -370,17 +370,18 @@ impl Kept {
         (Reuse::Rebuilt { nodes: count }, leaves)
     }
 
+    /// Styles are compared in place and cloned only when they differ: an unchanged frame copies no style.
     fn patch<'n>(
         &mut self,
         tree: &mut tf::TaffyTree<usize>,
-        plan: Vec<Entry<'n>>,
+        plan: &[Entry<'n>],
     ) -> (Reuse, Vec<Measured<'n>>) {
         let (mut styles, mut changed) = (0, 0);
         let mut leaves = Vec::with_capacity(plan.len());
-        for (entry, kept) in plan.into_iter().zip(&mut self.nodes) {
+        for (entry, kept) in plan.iter().zip(&mut self.nodes) {
             let differs = tree.style(kept.id).expect("kept node is live") != &entry.style;
             if differs {
-                tree.set_style(kept.id, entry.style)
+                tree.set_style(kept.id, entry.style.clone())
                     .expect("kept node is live");
                 styles += 1;
             }
@@ -487,12 +488,12 @@ impl<'n> Frame<'_, 'n> {
         };
         match kind(node) {
             Kind::Wrap(child) => {
-                let column = tf::Style {
+                let mut t = tf::Style {
                     display: tf::Display::Flex,
                     flex_direction: tf::FlexDirection::Column,
                     ..tf::Style::DEFAULT
                 };
-                let (t, link) = self.placed(column, style, role);
+                let link = self.place(&mut t, style, role);
                 let entry = self.plan_node(t, hang, Leaf::Empty);
                 let at = self.push_laid(entry, link);
                 self.build(
@@ -504,15 +505,17 @@ impl<'n> Frame<'_, 'n> {
                 Built::InTree(entry)
             }
             Kind::Leaf(leaf) => {
-                let (t, link) = self.placed(container_half(&style.layout), style, role);
+                let mut t = container_half(&style.layout);
+                let link = self.place(&mut t, style, role);
                 let entry = self.plan_node(t, hang, leaf);
                 self.push_laid(entry, link);
                 Built::InTree(entry)
             }
             Kind::Container(children) => {
-                let inner = self.padded(container_half(&style.layout), safe);
-                let (t, link) = self.placed(inner, style, role);
-                let (t, host_kind) = arrange(t, &style.content, role);
+                let mut t = container_half(&style.layout);
+                self.pad(&mut t, safe);
+                let link = self.place(&mut t, style, role);
+                let host_kind = arrange(&mut t, &style.content, role);
                 let entry = self.plan_node(t, hang, Leaf::Empty);
                 let at = self.push_laid(entry, link);
                 let host = Host {
@@ -526,8 +529,10 @@ impl<'n> Frame<'_, 'n> {
                 Built::InTree(entry)
             }
             Kind::Scroll { axis, child } => {
-                let inner = self.padded(scrolling(container_half(&style.layout), axis), safe);
-                let (t, link) = self.placed(inner, style, role);
+                let mut t = container_half(&style.layout);
+                scrolling(&mut t, axis);
+                self.pad(&mut t, safe);
+                let link = self.place(&mut t, style, role);
                 let entry = self.plan_node(t, hang, Leaf::Empty);
                 let at = self.push_laid(entry, link);
                 let host = Host {
@@ -583,79 +588,66 @@ impl<'n> Frame<'_, 'n> {
     // -----------------------------------------------------------------------------------------------------------
     // Kit policy on top of the node's own taffy style
 
-    /// `inner` (how the box arranges its children) plus everything the role decides about the box itself: size limits,
-    /// margin, flex/grid item fields, position.
-    fn placed(&self, inner: tf::Style, style: &Style, role: Role) -> (tf::Style, Link) {
+    /// Adds to `t` (how the box arranges its children) everything the role decides about the box itself: size
+    /// limits, margin, flex/grid item fields, position. In place: a taffy `Style` is large, and every copy of it is
+    /// paid per node per frame, whether or not the node changed.
+    fn place(&self, t: &mut tf::Style, style: &Style, role: Role) -> Link {
         match role {
             Role::Root => {
                 let Size { width, height } = self.viewport.size;
-                let t = tf::Style {
-                    size: tf::Size {
-                        width: px(width),
-                        height: px(height),
-                    },
-                    ..inner
+                t.size = tf::Size {
+                    width: px(width),
+                    height: px(height),
                 };
-                (t, Link::Origin)
+                Link::Origin
             }
             Role::Float(center) => {
-                let t = tf::Style {
-                    margin: tf::Rect::zero(),
-                    ..item_half(inner, &style.layout)
-                };
-                (t, Link::FloatCenter(center))
+                set_item_half(t, &style.layout);
+                t.margin = tf::Rect::zero();
+                Link::FloatCenter(center)
             }
             Role::Portal => {
                 // A portal never outgrows the screen; its margin is not part of where an anchor puts it.
                 let Size { width, height } = self.viewport.size;
-                let t = tf::Style {
-                    margin: tf::Rect::zero(),
-                    max_size: tf::Size {
-                        width: px(width),
-                        height: px(height),
-                    },
-                    ..item_half(inner, &style.layout)
+                set_item_half(t, &style.layout);
+                t.margin = tf::Rect::zero();
+                t.max_size = tf::Size {
+                    width: px(width),
+                    height: px(height),
                 };
-                (t, Link::Origin)
+                Link::Origin
             }
             Role::Fill { parent } => {
                 let full = Percent(100.0);
-                let t = tf::Style {
-                    size: tf::Size {
-                        width: full.into(),
-                        height: full.into(),
-                    },
-                    ..inner
+                t.size = tf::Size {
+                    width: full.into(),
+                    height: full.into(),
                 };
-                (t, Link::Flow { parent })
+                Link::Flow { parent }
             }
             Role::In(host) => match resolve(&style.placement, host.kind) {
                 Resolved::Anchored(anchor) => {
                     // Only size and margin: `place_anchored` positions the box, so no flex/grid item field may move it.
-                    let t = tf::Style {
-                        position: tf::Position::Absolute,
-                        align_self: None,
-                        justify_self: None,
-                        grid_row: tf::Line::<tf::GridPlacement>::AUTO,
-                        grid_column: tf::Line::<tf::GridPlacement>::AUTO,
-                        ..item_half(inner, &style.layout)
-                    };
-                    let link = Link::Anchored {
+                    set_item_half(t, &style.layout);
+                    t.position = tf::Position::Absolute;
+                    t.align_self = None;
+                    t.justify_self = None;
+                    t.grid_row = tf::Line::<tf::GridPlacement>::AUTO;
+                    t.grid_column = tf::Line::<tf::GridPlacement>::AUTO;
+                    Link::Anchored {
                         host: host.entry,
                         anchor,
                         safe: host.safe,
-                    };
-                    (t, link)
+                    }
                 }
                 Resolved::Flow => {
-                    let t = item_half(inner, &style.layout);
+                    set_item_half(t, &style.layout);
                     // A scroll child is laid out unconstrained on the scroll axis: it must not shrink to the viewport.
-                    let flex_shrink = match host.kind {
+                    t.flex_shrink = match host.kind {
                         HostKind::Scroll => 0.0,
                         HostKind::Taffy | HostKind::Anchors => t.flex_shrink,
                     };
-                    let t = tf::Style { flex_shrink, ..t };
-                    (t, Link::Flow { parent: host.entry })
+                    Link::Flow { parent: host.entry }
                 }
             },
         }
@@ -663,7 +655,7 @@ impl<'n> Frame<'_, 'n> {
 
     /// Adds the safe area (non-zero only on the root's own box) to the padding. The root box is the viewport, so a
     /// percent padding is resolved against the viewport width first (CSS percent padding is width-relative).
-    fn padded(&self, inner: tf::Style, safe: Insets) -> tf::Style {
+    fn pad(&self, t: &mut tf::Style, safe: Insets) {
         let basis = self.viewport.size.width as f32;
         let add = |side: tf::LengthPercentage, extra: f64| -> tf::LengthPercentage {
             let own = match side.expand() {
@@ -674,14 +666,13 @@ impl<'n> Frame<'_, 'n> {
             };
             px(f64::from(own) + extra)
         };
-        let p = inner.padding;
-        let padding = tf::Rect {
+        let p = t.padding;
+        t.padding = tf::Rect {
             left: add(p.left, safe.x0),
             right: add(p.right, safe.x1),
             top: add(p.top, safe.y0),
             bottom: add(p.bottom, safe.y1),
         };
-        tf::Style { padding, ..inner }
     }
 
     // -----------------------------------------------------------------------------------------------------------
@@ -825,37 +816,36 @@ fn round_up(value: f64) -> f32 {
 // ---------------------------------------------------------------------------------------------------------------
 // Style halves
 
-/// `onto` with the item half of `from`: the fields by which a parent sizes and places a box (size limits, margin,
-/// position, flex and grid item fields). Everything else (how the box arranges its children) stays `onto`'s.
-fn item_half(onto: tf::Style, from: &tf::Style) -> tf::Style {
-    tf::Style {
-        size: from.size,
-        min_size: from.min_size,
-        max_size: from.max_size,
-        aspect_ratio: from.aspect_ratio,
-        margin: from.margin,
-        position: from.position,
-        inset: from.inset,
-        flex_grow: from.flex_grow,
-        flex_shrink: from.flex_shrink,
-        flex_basis: from.flex_basis,
-        align_self: from.align_self,
-        justify_self: from.justify_self,
-        grid_row: from.grid_row.clone(),
-        grid_column: from.grid_column.clone(),
-        ..onto
-    }
+/// Copies the item half of `from` into `onto`: the fields by which a parent sizes and places a box (size limits,
+/// margin, position, flex and grid item fields). Everything else (how the box arranges its children) stays `onto`'s.
+fn set_item_half(onto: &mut tf::Style, from: &tf::Style) {
+    onto.size = from.size;
+    onto.min_size = from.min_size;
+    onto.max_size = from.max_size;
+    onto.aspect_ratio = from.aspect_ratio;
+    onto.margin = from.margin;
+    onto.position = from.position;
+    onto.inset = from.inset;
+    onto.flex_grow = from.flex_grow;
+    onto.flex_shrink = from.flex_shrink;
+    onto.flex_basis = from.flex_basis;
+    onto.align_self = from.align_self;
+    onto.justify_self = from.justify_self;
+    onto.grid_row = from.grid_row.clone();
+    onto.grid_column = from.grid_column.clone();
 }
 
 /// `s` with its item half at taffy's defaults: only how the box arranges its children (and its padding) remains.
 fn container_half(s: &tf::Style) -> tf::Style {
-    item_half(s.clone(), &tf::Style::DEFAULT)
+    let mut t = s.clone();
+    set_item_half(&mut t, &tf::Style::DEFAULT);
+    t
 }
 
 /// A container's display and what kind of host it is for its children.
-fn arrange(t: tf::Style, content: &Content, role: Role) -> (tf::Style, HostKind) {
+fn arrange(t: &mut tf::Style, content: &Content, role: Role) -> HostKind {
     match content {
-        Content::Taffy => (t, HostKind::Taffy),
+        Content::Taffy => HostKind::Taffy,
         Content::Anchors => {
             // An overlay has no content size: an `Auto` axis fills the host (the root is already the viewport).
             let fill = |d: tf::Dimension| match (role, d.is_auto()) {
@@ -863,22 +853,18 @@ fn arrange(t: tf::Style, content: &Content, role: Role) -> (tf::Style, HostKind)
                 (Role::In(_) | Role::Float(_) | Role::Portal, false)
                 | (Role::Root | Role::Fill { .. }, _) => d,
             };
-            let size = tf::Size {
+            t.size = tf::Size {
                 width: fill(t.size.width),
                 height: fill(t.size.height),
             };
-            let t = tf::Style {
-                display: tf::Display::Block,
-                size,
-                ..t
-            };
-            (t, HostKind::Anchors)
+            t.display = tf::Display::Block;
+            HostKind::Anchors
         }
     }
 }
 
 /// A scroll viewport: a flex line along the scroll axis whose overflow scrolls.
-fn scrolling(t: tf::Style, axis: Axis) -> tf::Style {
+fn scrolling(t: &mut tf::Style, axis: Axis) {
     let (flex_direction, items, x, y) = match axis {
         Axis::Vertical => (
             tf::FlexDirection::Column,
@@ -899,11 +885,8 @@ fn scrolling(t: tf::Style, axis: Axis) -> tf::Style {
             tf::Overflow::Scroll,
         ),
     };
-    tf::Style {
-        display: tf::Display::Flex,
-        flex_direction,
-        align_items: Some(items),
-        overflow: tf::Point { x, y },
-        ..t
-    }
+    t.display = tf::Display::Flex;
+    t.flex_direction = flex_direction;
+    t.align_items = Some(items);
+    t.overflow = tf::Point { x, y };
 }

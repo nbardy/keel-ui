@@ -30,6 +30,7 @@ pub(crate) enum Kind<'a, Msg> {
 }
 
 /// A childless node and what gives it an intrinsic size.
+#[derive(Copy, Clone)]
 pub(crate) enum Leaf<'a> {
     Text {
         text: &'a RichText,
