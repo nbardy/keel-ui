@@ -46,7 +46,7 @@ use kit_paint::paint;
 use kit_raster::RasterUi;
 use kit_raster::golden::{self, Mode, Tolerance};
 use kit_raster::tiny_skia::{self, Pixmap};
-use kit_state::{Cx, Host, Intent, Store, dispatch, wake_due};
+use kit_state::{Cx, Host, Intent, Store, dispatch, sync_reads, wake_due};
 use kit_view::testing::{control, text_system};
 use kit_view::{CosmicText, LaidKind, LaidOut, NoWorld, Node, Role, Semantic, SemanticState};
 use kit_view::{Toggle, semantics};
@@ -104,12 +104,13 @@ pub struct Handle<A: Host, V> {
 impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
     pub fn new(app: A, size: (f64, f64), view: V) -> Self {
         let viewport = Viewport::new(Size::new(size.0, size.1), 1.0);
-        let (store, theme, mut text) = (Store::new(), theme(), text_system());
+        let (mut app, mut store, theme, mut text) = (app, Store::new(), theme(), text_system());
         let mut router = Router::default();
         router.config.platform = Platform::Other;
         let mut memory = UiMemory::new(viewport);
         let (laid, view_redraw) =
             lay_out(&app, &store, &view, &theme, viewport, &mut text, &memory);
+        sync_reads(&mut app, &mut store);
         router.frame(&laid, &mut memory, app.now());
         Self {
             app,
@@ -203,9 +204,19 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
             &mut self.text,
             &self.memory,
         );
+        // Reads are per build: tell the app which resources the view started and stopped reading.
+        sync_reads(&mut self.app, &mut self.store);
         self.router
             .frame(&self.laid, &mut self.memory, self.app.now());
         self.memory.end_frame();
+    }
+
+    /// The host's side of a server round trip: `report` gets the app and the store (to deliver a verdict with
+    /// `Store::settle`, or any change the server's reply makes), then one frame runs. Returns what `report` returns.
+    pub fn host<R>(&mut self, report: impl FnOnce(&mut A, &mut Store<A>) -> R) -> R {
+        let reported = report(&mut self.app, &mut self.store);
+        self.frame();
+        reported
     }
 
     /// Press and release the centre of the visible part of the control a screen reader announces as `label` with `role`.

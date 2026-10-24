@@ -5,7 +5,9 @@ use crate::anim::Tween;
 use crate::ident::{AnyKey, Host, Ident, Life};
 use crate::input::{Drag, Interaction, Unrouted};
 use crate::intent::{Intent, StepIntent};
+use crate::read::{Loaded, Resource};
 use crate::store::{SlotId, Store};
+use crate::track::{Command, Tracked, Verdict, read as read_verdict};
 use core::any::TypeId;
 use core::cell::Cell;
 use core::fmt::Debug;
@@ -171,6 +173,30 @@ impl<'a, A: Host> Cx<'a, A> {
             Life::Leaving(_) | Life::Over => {}
         }
         value
+    }
+
+    /// The server's verdict on the latest command of kind `C` that a reducer of `key` sent with `Act::ask_tracked`.
+    /// A pending one past `C::WITHIN` reads `Unknown`; while it is still pending this view asks to be redrawn at the
+    /// deadline, so an idle app wakes for it. A key that is not Live has no record: `Unsent`.
+    pub fn track<C: Command>(&self, key: &impl Ident<A>) -> Verdict<C::Why> {
+        self.observe_life(key);
+        let id: SlotId<A> = (TypeId::of::<C>(), AnyKey::new(key.clone()));
+        match self.store.read::<Tracked<C::Why>>(&id) {
+            None => Verdict::Unsent,
+            Some(tracked) => {
+                let (verdict, demand) = read_verdict(&tracked, self.app.now());
+                self.redraw.set(self.redraw.get().earliest(demand));
+                verdict
+            }
+        }
+    }
+
+    /// Read a resource: its state in the app now, and a subscription that keeps it loaded while any view reads it.
+    /// The app is told to `want` it the first frame it is read and to `release` it after a frame in which nothing
+    /// read it (see [`sync_reads`](crate::sync_reads)).
+    pub fn read<R: Resource<A>>(&self, resource: &R) -> Loaded<R::Value, R::Error> {
+        self.store.reads.borrow_mut().read(resource);
+        resource.state(self.app)
     }
 
     /// A value computed from the app and other state, recomputed every call (no memo, no dependency list). The same

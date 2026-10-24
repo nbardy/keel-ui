@@ -36,6 +36,7 @@ pub struct Store<A: Host> {
     pub(crate) faults: Vec<Fault>,
     /// Keys whose router-side memory (scroll offsets) is keyed by `WidgetId::of(key)`; collected with the key.
     pub(crate) widgets: RefCell<HashMap<AnyKey<A>, WidgetId>>,
+    pub(crate) reads: RefCell<crate::read::Reads<A>>,
     released: Vec<WidgetId>,
     timers: Vec<Timer<A>>,
     scheduled: u64,
@@ -49,6 +50,7 @@ impl<A: Host> Default for Store<A> {
             late_total: 0,
             faults: Vec::new(),
             widgets: RefCell::new(HashMap::new()),
+            reads: RefCell::new(crate::read::Reads::default()),
             released: Vec::new(),
             timers: Vec::new(),
             scheduled: 0,

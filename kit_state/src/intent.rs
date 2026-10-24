@@ -3,6 +3,7 @@ use crate::act::{Fault, Wake};
 use crate::cx::Reducer;
 use crate::ident::{AnyKey, Host, Ident, Life};
 use crate::store::{SlotId, Slots, Store, slot_value_mut};
+use crate::track::{Sent, record_sent};
 use core::any::{Any, TypeId};
 use core::fmt::{self, Debug};
 use core::marker::PhantomData;
@@ -15,6 +16,8 @@ pub enum LateWhy {
     Gone,
     /// The key is Leaving: its state is kept inert for the exit.
     Leaving,
+    /// A verdict arrived for a command that is not awaiting one: never sent for this key, or already answered.
+    Unsent,
 }
 
 /// A refused intent, counted in the Store.
@@ -30,6 +33,7 @@ pub struct Late {
 pub struct Effects<A: Host> {
     pub(crate) asks: Vec<A::Ask>,
     pub(crate) faults: Vec<Fault>,
+    pub(crate) sent: Vec<Sent>,
     pub(crate) wake: Wake<Rc<dyn ErasedStep<A>>>,
     pub(crate) slot: SlotId<A>,
 }
@@ -97,6 +101,7 @@ where
                 Ok(Effects {
                     asks: act.asks,
                     faults: act.faults,
+                    sent: act.sent,
                     wake,
                     slot: id,
                 })
@@ -172,6 +177,12 @@ pub fn dispatch<A: Host>(app: &mut A, store: &mut Store<A>, intent: Intent<A>) {
             match step.apply(store.slots.get_mut(), app) {
                 Ok(effects) => {
                     store.faults.extend(effects.faults);
+                    record_sent(
+                        store.slots.get_mut(),
+                        &effects.slot.1,
+                        &effects.sent,
+                        app.now(),
+                    );
                     match effects.wake {
                         Wake::Keep => {}
                         Wake::At(at, step) => store.schedule(effects.slot, at, step),
