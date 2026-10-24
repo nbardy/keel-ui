@@ -73,6 +73,7 @@ pub(crate) fn reaches_world(event: &InputEvent) -> bool {
         },
         InputEvent::Wheel { .. }
         | InputEvent::Key { .. }
+        | InputEvent::Nav(_)
         | InputEvent::Text(_)
         | InputEvent::Ime(_)
         | InputEvent::Paste { .. } => true,

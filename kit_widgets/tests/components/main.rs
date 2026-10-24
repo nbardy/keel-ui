@@ -11,6 +11,7 @@ mod listbox;
 mod local_app;
 mod menu;
 mod modal;
+mod nav;
 mod progress;
 mod radio;
 mod readme;

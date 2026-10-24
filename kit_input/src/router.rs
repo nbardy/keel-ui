@@ -124,6 +124,7 @@ impl Router {
             InputEvent::Key { key, state, mods } => {
                 self.key(laid, memory, KeyEvent { key, state, mods }, now, &mut out)
             }
+            InputEvent::Nav(action) => self.nav(laid, memory, action, now, &mut out),
             InputEvent::Modifiers(mods) => {
                 memory.mods = mods;
                 Claim::Free

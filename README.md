@@ -178,7 +178,7 @@ list with real clicks, and checks were confirmed to fail when state is keyed by 
 panels, inspectors, chat, shops) you want to write as declarative components with local state, including multiplayer
 apps where the server owns the truth. Images cover item icons, portraits and live render targets.
 
-**Wait** if your UI is controller-first (no spatial navigation yet), shows long lists (no virtualisation yet), or must
+**Wait** if your UI is controller-first and needs more than the directional focus described in the limits, shows long lists (no virtualisation yet), or must
 work with a screen reader (see limits).
 
 **Pick something else** for a Bevy game (Bevy UI). Choose egui when its large widget set, its integrations and its
@@ -194,8 +194,17 @@ maturity matter most; choose the kit when you prefer a component tree with data-
   activation, but nothing hands it to the platform's accessibility API. For a game HUD that may be acceptable; for an
   editor or app that people depend on, it is a serious gap. A native bridge (AccessKit) could consume the same tree;
   it is not built.
-- **No gamepad input or spatial navigation.** Focus moves by Tab order (Up/Down walk it too); a controller-driven
-  inventory grid needs the game to map buttons to keys and steer focus itself.
+- **Gamepad navigation is events, not a gamepad driver.** `InputEvent::Nav(NavAction)` carries device-independent
+  actions: `Move(Up|Down|Left|Right)`, `Activate`, `Cancel`, `Next`, `Previous`. Your host maps d-pad, stick or keys to
+  them; the kit reads no gamepad and has no gamepad library. A move focuses the nearest focusable control ahead of
+  the focused one, by on-screen rect: candidates must be past it in that direction, and the lowest
+  `gap along the direction + 2 x offset across it` wins (rule in `kit_input/src/nav.rs`). Disabled controls,
+  controls with nothing to press, and everything behind a modal are skipped; at an edge focus stays; from nowhere
+  Down/Right enter at the first control and Up/Left at the last. A target outside its scroll area scrolls into view
+  (also for Tab). Not built: per-control overrides ("Right goes to X"), remembering where focus was after the
+  focused control disappears (the next move re-enters at the first/last control), analog-stick dead zones and
+  auto-repeat (the host sends one `Move` per step it wants), and arrow-key `Key` events still walk Tab order rather
+  than moving spatially unless the host maps them to `Nav`.
 - **Long lists are slow; no virtualisation.** Every row is laid out every frame. On an Apple M4
   ([`docs/BENCH.md`](docs/BENCH.md), one run, a list of rows with text and a button), layout takes 2.4 ms per frame at
   100 rows, 28 ms at 1,000 and 326 ms at 10,000; egui's whole CPU frame is about 10× cheaper. The game's 58-node

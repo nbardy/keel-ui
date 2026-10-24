@@ -123,6 +123,13 @@ pub(crate) fn step(order: &[WidgetId], current: Focus, reverse: bool) -> Option<
     order.get(index).copied()
 }
 
+/// Focus moved by navigation (Tab, a directional move): the control takes focus and any scroll area around it brings
+/// it into view.
+pub(crate) fn move_focus<Msg>(laid: &LaidOut<Msg>, memory: &mut UiMemory, id: WidgetId, now: Time) {
+    focus_on(memory, id, now);
+    crate::scroll::reveal_focused(laid, memory, id);
+}
+
 pub(crate) fn focus_on(memory: &mut UiMemory, id: WidgetId, now: Time) {
     if memory.focus != Focus::On(id) {
         memory.anim.insert((id, AnimKey::Focus), now);
@@ -336,7 +343,7 @@ impl Router {
     ) -> Claim {
         match step(&order(laid), memory.focus, reverse) {
             Some(id) => {
-                focus_on(memory, id, now);
+                move_focus(laid, memory, id, now);
                 Claim::Taken
             }
             None => Claim::Free,

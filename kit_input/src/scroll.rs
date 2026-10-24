@@ -683,6 +683,11 @@ fn reveal_target<Msg>(laid: &LaidOut<Msg>, area: &Area, current: Vec2) -> Option
         RevealTarget::Child(id) => laid.find(id)?.rect - area.rect.origin().to_vec2(),
         RevealTarget::Content(r) => r + (area.content.origin() - area.rect.origin()),
     };
+    Some((ticket, reveal_offset(area, span, align, current)))
+}
+
+/// The offset that shows `span` (content coordinates) in `area` as `align` says, clamped to what the area can reach.
+fn reveal_offset(area: &Area, span: Rect, align: RevealAlign, current: Vec2) -> Vec2 {
     let pick = |s: f64, e: f64, view: f64, o: f64| match align {
         RevealAlign::Start => s,
         RevealAlign::Center => (s + e) / 2.0 - view / 2.0,
@@ -701,5 +706,50 @@ fn reveal_target<Msg>(laid: &LaidOut<Msg>, area: &Area, current: Vec2) -> Option
         if max.x > 0.0 { want.x } else { current.x },
         if max.y > 0.0 { want.y } else { current.y },
     );
-    Some((ticket, area.clamp(want)))
+    area.clamp(want)
+}
+
+/// Keyboard or gamepad focus moved to `id`: every scroll area around it glides by the smallest move that shows it.
+/// A control already in view moves nothing. (The same glide a `Reveal::Request` starts, without needing a view-side
+/// request for a focus the router itself moved.)
+pub(crate) fn reveal_focused<Msg>(laid: &LaidOut<Msg>, memory: &mut UiMemory, id: WidgetId) {
+    let mut areas = Vec::new();
+    let Some(target) = enclosing(&laid.root, id, &mut areas) else {
+        return;
+    };
+    for area in areas {
+        let current = memory.scroll.offset(area.id);
+        let span = target - area.rect.origin().to_vec2();
+        let want = reveal_offset(&area, span, RevealAlign::Nearest, current);
+        if want != current {
+            memory.area(&area).motion = Motion::Glide { target: want };
+        }
+    }
+}
+
+/// The laid rect of the control `id`, pushing the scroll areas around it (innermost first); `None` if it is not here.
+fn enclosing<Msg>(node: &LaidNode<Msg>, id: WidgetId, out: &mut Vec<Area>) -> Option<Rect> {
+    let own = match &node.kind {
+        LaidKind::TextField { id: found, .. } | LaidKind::Interactive { id: found, .. } => {
+            (*found == id).then_some(node.rect)
+        }
+        LaidKind::Stack { .. }
+        | LaidKind::Panel { .. }
+        | LaidKind::Text { .. }
+        | LaidKind::Image { .. }
+        | LaidKind::Shape { .. }
+        | LaidKind::Scroll { .. }
+        | LaidKind::Layer { .. }
+        | LaidKind::World { .. }
+        | LaidKind::Portal { .. } => None,
+    };
+    let found = own.or_else(|| {
+        node.children()
+            .iter()
+            .find_map(|child| enclosing(child, id, out))
+    });
+    if found.is_some() {
+        out.extend(Area::of(node));
+    }
+    found
 }

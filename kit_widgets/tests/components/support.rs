@@ -8,12 +8,14 @@
 //! `cx.scroll` are live), and every layout is followed by `Router::frame` (scroll measurement, reveal, stick) and
 //! `UiMemory::end_frame`. The router uses `Platform::Other` (Ctrl is the command key) on every OS, so a test that
 //! presses Ctrl+V means the same thing on a Mac as on CI.
-use kit_core::kurbo::Point;
 use kit_core::kurbo::Size;
+use kit_core::kurbo::{Point, Vec2};
 use kit_core::peniko::Color;
-use kit_core::{ColorVision, Key, MotionPref, Theme, Time, Viewport};
+use kit_core::{ColorVision, Key, MotionPref, Theme, Time, Viewport, WidgetId};
 use kit_input::{ClipboardRequest, InputEvent, KeyState, Modifiers, Phase, Platform};
-use kit_input::{Focus, PointerButton, PointerEvent, PointerId, PointerKind, Router, UiMemory};
+use kit_input::{
+    Focus, NavAction, PointerButton, PointerEvent, PointerId, PointerKind, Router, UiMemory,
+};
 use kit_layout::TaffyLayout;
 use kit_paint::paint;
 use kit_raster::RasterUi;
@@ -224,6 +226,14 @@ impl<A: Host, V: Fn(&Cx<'_, A>, &Theme) -> Node<Intent<A>>> Handle<A, V> {
         }));
     }
 
+    /// A navigation action (what a host maps a gamepad button or key to).
+    pub fn nav(&mut self, action: NavAction) {
+        self.input(InputEvent::Nav(action));
+    }
+    /// A scroll area's offset as the router holds it.
+    pub fn scroll_offset(&self, id: WidgetId) -> Vec2 {
+        self.memory.scroll_offset(id)
+    }
     /// Where keyboard focus is, as the router holds it.
     pub fn focus(&self) -> Focus {
         self.memory.focus()

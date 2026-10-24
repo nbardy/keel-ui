@@ -8,6 +8,7 @@ mod focus;
 mod hit;
 mod layers;
 mod memory;
+mod nav;
 mod router;
 mod scroll;
 mod track;
@@ -16,8 +17,8 @@ pub use clipboard::{
     Clipboard, ClipboardError, ClipboardRead, ClipboardRequest, PasteTicket, Serviced, service,
 };
 pub use event::{
-    DeltaUnit, ImeEvent, InputEvent, Key, KeyState, Modifiers, NamedKey, Phase, PointerButton,
-    PointerEvent, PointerId, PointerKind,
+    DeltaUnit, ImeEvent, InputEvent, Key, KeyState, Modifiers, NamedKey, NavAction, NavDirection,
+    Phase, PointerButton, PointerEvent, PointerId, PointerKind,
 };
 pub use field::{Granularity, Platform, TextTarget, paste_ticket, text_target};
 pub use focus::FocusOutcome;
