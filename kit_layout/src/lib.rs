@@ -9,9 +9,11 @@
 //! * `Node::World` floats: it takes no space in its parent, its child is centred on the projected point plus the
 //!   anchor offset, and `Culled` projection culls the whole subtree (`Shown::Culled`, zero rects).
 //! * Wrappers (`Interactive`, `Layer`) take their child's box; their rects equal the child's.
+//! * The taffy tree is kept between calls: a node at the same place with the same style and measure input costs a
+//!   comparison, and an unchanged frame never reaches taffy's solver. `TaffyLayout::last_reuse` says what a call did.
 
 mod kind;
 mod portals;
 mod taffy_engine;
 
-pub use taffy_engine::{TaffyLayout, place_anchored};
+pub use taffy_engine::{Reuse, TaffyLayout, place_anchored};

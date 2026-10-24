@@ -53,6 +53,10 @@ use kit_core::kurbo::{Rect, Size};
 use layout::{FamilyUse, Segment, build_buffer, resolve_family, resolve_segments};
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Source of `CosmicText::instance` values: process-wide, so two systems never share one.
+static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
 pub struct TextConfig {
@@ -191,6 +195,7 @@ pub struct Diagnostics {
 }
 
 pub struct CosmicText {
+    instance: u64,
     fs: SharedFonts,
     swash: SwashCache,
     config: TextConfig,
@@ -213,6 +218,7 @@ impl CosmicText {
     /// per-system; only the faces and shaping state are shared.
     pub fn with_fonts(fonts: SharedFonts, config: TextConfig) -> Self {
         Self {
+            instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
             fs: fonts,
             swash: SwashCache::new(),
             config,
@@ -224,6 +230,13 @@ impl CosmicText {
             rasters: HashMap::new(),
             diagnostics: Diagnostics::default(),
         }
+    }
+
+    /// Which text system this is: unique per constructed `CosmicText`, never reused. A size this system measured is
+    /// only valid for this system (its fonts and config decide it), so a caller that keeps measured sizes between
+    /// frames (`kit_layout`'s retained tree) keeps this beside them and drops them when it changes.
+    pub fn instance(&self) -> u64 {
+        self.instance
     }
 
     pub fn diagnostics(&self) -> &Diagnostics {

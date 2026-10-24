@@ -3,7 +3,7 @@ mod common;
 use common::*;
 use kit_core::kurbo::{Insets, Rect, Size, Vec2};
 use kit_core::{Axis, Viewport, WidgetId};
-use kit_layout::TaffyLayout;
+use kit_layout::{Reuse, TaffyLayout};
 use kit_view::taffy::{FlexDirection, FlexWrap};
 use kit_view::*;
 
@@ -241,4 +241,89 @@ fn text_system_is_asked_a_bounded_number_of_times_per_text_leaf() {
         .unwrap();
     let per_leaf = (fonts.layout_calls() - before) as f64 / (3 * rows) as f64;
     assert!(per_leaf <= 2.0, "{per_leaf} layout calls per text leaf");
+}
+
+/// Regression guard for list layout cost: a frame that asks for the tree the last frame left must not hand taffy
+/// anything. The tree used to be rebuilt and re-solved from scratch every frame (about 10 us per row at 100 rows, 70%
+/// of it taffy's solver). Counted, not timed: `Reuse` says what happened to the kept tree, and the text system is
+/// only asked by `assemble` (once per text leaf) because no measure ran.
+#[test]
+fn an_unchanged_frame_costs_taffy_nothing_and_an_edited_label_costs_one_leaf() {
+    let style = TextStyle::new(13.0, kit_core::peniko::Color::WHITE);
+    // One row is seven laid nodes: row, label, row, "On", row, row, "Buy".
+    let nodes_per_row = 7;
+    let rows = 50;
+    let list = |rows: usize, first_label: &str| {
+        column::<()>((0..rows).map(|i| {
+            let label = match i {
+                0 => first_label.to_string(),
+                _ => format!("Item {i}"),
+            };
+            row([
+                text(label, style.clone()),
+                row([text("On", style.clone())]),
+                row([row([text("Buy", style.clone())])]),
+            ])
+        }))
+    };
+    let vp = Viewport::new(Size::new(800.0, 600.0), 1.0);
+    let mut fonts = text_system();
+    let mut layout = TaffyLayout::new();
+    let frame = |layout: &mut TaffyLayout, fonts: &mut kit_view::CosmicText, root| {
+        let before = fonts.layout_calls();
+        layout.layout(root, vp, fonts, &NoWorld).unwrap();
+        (layout.last_reuse(), fonts.layout_calls() - before)
+    };
+    let nothing = Reuse::default();
+
+    let (first, _) = frame(&mut layout, &mut fonts, list(rows, "Item 0"));
+    assert_eq!(first.created, 1 + rows * nodes_per_row);
+
+    let (same, calls) = frame(&mut layout, &mut fonts, list(rows, "Item 0"));
+    assert_eq!(same, nothing);
+    assert_eq!(
+        calls,
+        3 * rows as u64,
+        "only assemble shapes: one call per text leaf"
+    );
+
+    let (edited, _) = frame(&mut layout, &mut fonts, list(rows, "Item zero"));
+    assert_eq!(
+        edited,
+        Reuse {
+            remeasured: 1,
+            ..nothing
+        }
+    );
+
+    // Rows added or dropped at the end leave every row before them alone.
+    let (longer, _) = frame(&mut layout, &mut fonts, list(rows + 2, "Item zero"));
+    assert_eq!(
+        longer,
+        Reuse {
+            created: 2 * nodes_per_row,
+            ..nothing
+        }
+    );
+    let (shorter, _) = frame(&mut layout, &mut fonts, list(rows - 1, "Item zero"));
+    assert_eq!(
+        shorter,
+        Reuse {
+            removed: 3 * nodes_per_row,
+            ..nothing
+        }
+    );
+
+    // Sizes a text system measured are only good for that system.
+    let mut other = text_system();
+    let all = 1 + (rows - 1) * nodes_per_row;
+    let (swapped, _) = frame(&mut layout, &mut other, list(rows - 1, "Item zero"));
+    assert_eq!(
+        swapped,
+        Reuse {
+            created: all,
+            removed: all,
+            ..nothing
+        }
+    );
 }

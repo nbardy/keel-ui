@@ -30,6 +30,7 @@ pub(crate) enum Kind<'a, Msg> {
 }
 
 /// A childless node and what gives it an intrinsic size.
+#[derive(Copy, Clone)]
 pub(crate) enum Leaf<'a> {
     Text {
         text: &'a RichText,
@@ -42,6 +43,55 @@ pub(crate) enum Leaf<'a> {
     /// `Shape`: sized by style only.
     Image(Size),
     Empty,
+}
+
+/// A [`Leaf`] kept past the frame whose `Node` tree it borrowed from: exactly the inputs its measure reads, owned.
+/// The retained layout compares the next frame's leaf against it to learn whether a measured size is still good.
+/// Whatever `Leaf::measure` reads must be in here: an input missing from `Held` is a size taffy keeps after the content
+/// changed (a stale label width, not a crash). `generated.rs`'s kept-versus-fresh test and `engines.rs`'s `Reuse` test
+/// are what catch one.
+pub(crate) enum Held {
+    Text { text: RichText, style: TextStyle },
+    Field { view: FieldView, field: FieldStyle },
+    Image(Size),
+    Empty,
+}
+
+impl Leaf<'_> {
+    pub(crate) fn hold(&self) -> Held {
+        match self {
+            Leaf::Text { text, style } => Held::Text {
+                text: (*text).clone(),
+                style: (*style).clone(),
+            },
+            Leaf::Field { view, field } => Held::Field {
+                view: (*view).clone(),
+                field: (*field).clone(),
+            },
+            Leaf::Image(size) => Held::Image(*size),
+            Leaf::Empty => Held::Empty,
+        }
+    }
+}
+
+impl Held {
+    /// Whether `leaf` measures exactly as the leaf this was taken from did.
+    pub(crate) fn is(&self, leaf: &Leaf<'_>) -> bool {
+        match (self, leaf) {
+            (Held::Text { text, style }, Leaf::Text { text: t, style: s }) => {
+                text == *t && style == *s
+            }
+            (Held::Field { view, field }, Leaf::Field { view: v, field: f }) => {
+                view == *v && field == *f
+            }
+            (Held::Image(a), Leaf::Image(b)) => a == b,
+            (Held::Empty, Leaf::Empty) => true,
+            (Held::Text { .. }, Leaf::Field { .. } | Leaf::Image(_) | Leaf::Empty)
+            | (Held::Field { .. }, Leaf::Text { .. } | Leaf::Image(_) | Leaf::Empty)
+            | (Held::Image(_), Leaf::Text { .. } | Leaf::Field { .. } | Leaf::Empty)
+            | (Held::Empty, Leaf::Text { .. } | Leaf::Field { .. } | Leaf::Image(_)) => false,
+        }
+    }
 }
 
 pub(crate) fn kind<Msg>(node: &Node<Msg>) -> Kind<'_, Msg> {

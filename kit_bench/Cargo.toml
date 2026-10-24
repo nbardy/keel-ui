@@ -14,6 +14,10 @@ workspace = true
 name = "frame_bench"
 path = "src/bin/frame_bench.rs"
 
+[[bin]]
+name = "layout_cost"
+path = "src/bin/layout_cost.rs"
+
 [dependencies]
 kit_core.workspace = true
 kit_view.workspace = true
