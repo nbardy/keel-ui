@@ -34,6 +34,28 @@ Median and p95 are nearest-rank, in milliseconds, per frame.
 Frames: 20 warm-up frames, then 200 measured. At 10,000 rows the median warm-up frame was over 100 ms, so the
 measured run was cut to 50 frames (the rule in the bench). egui used the same frame counts as kit at each N.
 
+## Virtualised list (second run, same day)
+
+The same rows in `kit_widgets::virtual_items`: a scroll area 800 px high, 32 px rows, idle at the top (about 25 rows
+plus 3 of overscan built; the other rows are two spacers). The bench prints these as `kit virtual ...` lines next to
+the plain `kit ...` lines of the same row count, in one process. The bench does not scroll, so
+it measures the idle window only.
+
+**This run was taken while the machine was badly overloaded** (load average 87 to 201 on the M4; the first table was
+taken at 9 to 14). Every number from this run is inflated: the plain 10,000-row layout read 2,589 ms here against
+326 ms in the first table. Read the virtual lines against the plain lines printed beside them in the same run, not
+against the first table. Median ms per frame, 200 frames (the plain 1,000 and 10,000 cases were cut to 50):
+
+| Rows | kit layout, plain | kit layout, virtual | kit build + layout + paint, plain | same, virtual | kit total, virtual (incl. GPU record) |
+|---:|---:|---:|---:|---:|---:|
+| 100 | 11.269 | 3.098 | 11.969 | 3.335 | 5.740 |
+| 1000 | 257.303 | 3.322 | 272.002 | 3.536 | 6.675 |
+| 10000 | 2588.571 | 2.567 | 2761.610 | 2.719 | 5.093 |
+
+Layout of the virtual list does not grow with the row count (2.6 to 3.3 ms here for every N; the spread is load).
+At 10,000 rows the plain list costs about 1,000 times the virtual one in the same run. Re-run on an idle machine
+before quoting an absolute figure.
+
 ## Machine
 
 - CPU: Apple M4
@@ -67,7 +89,8 @@ Run from `keel/crates/kit` with `CARGO_TARGET_DIR=keel/target/kit-bench` and `--
   `Router::frame` and `UiMemory::end_frame` are outside all four phases, so they are not in the totals.
 - **egui is CPU only.** egui-wgpu does not match this workspace's wgpu version, so there is no egui GPU number.
 - **Not like for like.** egui's button has no icon and the kit's does (the kit uses `labeled_button`). egui has no
-  virtualisation here, and neither does the kit: both build every row every frame.
+  virtualisation here, and neither does the plain-list kit case: both build every row every frame. The `kit virtual`
+  cases below do.
 - **Shared machine.** Other jobs were running. The load average was about 9 to 14 when
   checked after the run. Treat the numbers as indicative, and expect noise between runs.
 - **Single run.** One run per configuration, no repeats. The p95 is over 200 frames (50 at 10k).

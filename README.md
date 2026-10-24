@@ -178,7 +178,7 @@ list with real clicks, and checks were confirmed to fail when state is keyed by 
 panels, inspectors, chat, shops) you want to write as declarative components with local state, including multiplayer
 apps where the server owns the truth. Images cover item icons, portraits and live render targets.
 
-**Wait** if your UI is controller-first (no spatial navigation yet), shows long lists (no virtualisation yet), or must
+**Wait** if your UI is controller-first (no spatial navigation yet), shows long lists of variable-height rows (virtualisation needs one fixed row height), or must
 work with a screen reader (see limits).
 
 **Pick something else** for a Bevy game (Bevy UI). Choose egui when its large widget set, its integrations and its
@@ -196,11 +196,15 @@ maturity matter most; choose the kit when you prefer a component tree with data-
   it is not built.
 - **No gamepad input or spatial navigation.** Focus moves by Tab order (Up/Down walk it too); a controller-driven
   inventory grid needs the game to map buttons to keys and steer focus itself.
-- **Long lists are slow; no virtualisation.** Every row is laid out every frame. On an Apple M4
-  ([`docs/BENCH.md`](docs/BENCH.md), one run, a list of rows with text and a button), layout takes 2.4 ms per frame at
-  100 rows, 28 ms at 1,000 and 326 ms at 10,000; egui's whole CPU frame is about 10× cheaper. The game's 58-node
-  in-match HUD lays out in about 23 µs (layout only, text layouts cached). Why a list row costs so much more per node
-  than the HUD is not yet profiled.
+- **Long plain lists are slow; long lists can be virtualised.** A plain `column` lays out every row every frame. On an
+  Apple M4 ([`docs/BENCH.md`](docs/BENCH.md), one run, a list of rows with text and a button), layout takes 2.4 ms per
+  frame at 100 rows, 28 ms at 1,000 and 326 ms at 10,000; egui's whole CPU frame is about 10x cheaper. The game's
+  58-node in-match HUD lays out in about 23 us (layout only, text layouts cached). Why a list row costs so much more
+  per node than the HUD is not yet profiled. `virtual_items` (and `table`, which uses the same core) builds and lays
+  out only the rows in view plus 3 of overscan on each side: its per-frame cost does not grow with the row count (10,000
+  rows: about the cost of a 25-row screen, in the BENCH run's same-process comparison). It needs one fixed row height.
+  Variable row heights, list-owned keyboard navigation (a focused row that is not built cannot be reached, and nothing
+  scrolls to a cursor you did not reveal yourself) and grids are not built.
 - **Context menus are the host's.** Right-click and long-press are not recognised by the router: the host detects
   the gesture and opens a menu, and focus is not yet restored when a popup closes.
 - **A native starter, no browser starter.** `kit_winit` (winit events, IME, arboard clipboard) and its `starter`

@@ -9,7 +9,7 @@ use kit_core::{Axis, Border, Key, Modifiers, NamedKey, Shadow, Theme, Time, Widg
 use kit_state::{Cx, Host, Ident, Intent};
 use kit_view::{A11y, Style, Toggle, Weight, column, interactive, panel, px, scroll_area, text};
 use kit_view::{Bindings, KeyAnswer, KeyPress, Node, RevealAlign, RevealTarget, Role, ScrollSpec};
-use std::{hash::Hash, rc::Rc, time::Duration};
+use std::{collections::HashSet, hash::Hash, rc::Rc, time::Duration};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -68,7 +68,8 @@ impl<I: Clone + Eq> Default for Selection<I> {
         }
     }
 }
-impl<I: Clone + Eq> Selection<I> {
+// `Hash` is for the duplicate-key check (O(n), was O(n^2)); `listbox` already required it, so no usable caller changes.
+impl<I: Clone + Eq + Hash> Selection<I> {
     pub fn selected(&self) -> &[I] {
         &self.selected
     }
@@ -161,11 +162,10 @@ impl<I: Clone + Eq> Selection<I> {
             .find(|&i| items[i].1.to_lowercase().starts_with(&self.query))
     }
 }
-fn unique<I: Eq>(items: &[(I, &str)]) {
-    let ok = items
-        .iter()
-        .enumerate()
-        .all(|(i, (key, _))| items[..i].iter().all(|(other, _)| key != other));
+/// One pass with a hash set. It ran every build as a pairwise scan: 10,000 rows cost 50 million comparisons a frame.
+fn unique<I: Eq + Hash>(items: &[(I, &str)]) {
+    let mut seen = HashSet::with_capacity(items.len());
+    let ok = items.iter().all(|(key, _)| seen.insert(key));
     assert!(ok, "listbox: duplicate item keys");
 }
 
