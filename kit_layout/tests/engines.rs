@@ -246,7 +246,7 @@ fn text_system_is_asked_a_bounded_number_of_times_per_text_leaf() {
 /// Regression guard for list layout cost: a frame that asks for the tree the last frame left must not hand taffy
 /// anything. The tree used to be rebuilt and re-solved from scratch every frame (about 10 us per row at 100 rows, 70%
 /// of it taffy's solver). Counted, not timed: `Reuse` says what happened to the kept tree, and the text system is
-/// only asked by `assemble` (once per text leaf) because no measure ran.
+/// not asked at all: no measure ran, and `assemble` remembers each text leaf's layout.
 #[test]
 fn an_unchanged_frame_costs_taffy_nothing_and_an_edited_label_costs_one_leaf() {
     let style = TextStyle::new(13.0, kit_core::peniko::Color::WHITE);
@@ -281,11 +281,7 @@ fn an_unchanged_frame_costs_taffy_nothing_and_an_edited_label_costs_one_leaf() {
 
     let (same, calls) = frame(&mut layout, &mut fonts, list(rows, "Item 0"));
     assert_eq!(same, nothing);
-    assert_eq!(
-        calls,
-        3 * rows as u64,
-        "only assemble shapes: one call per text leaf"
-    );
+    assert_eq!(calls, 0, "an unchanged frame asks the text system nothing");
 
     let (edited, _) = frame(&mut layout, &mut fonts, list(rows, "Item zero"));
     assert_eq!(
@@ -326,4 +322,41 @@ fn an_unchanged_frame_costs_taffy_nothing_and_an_edited_label_costs_one_leaf() {
             ..nothing
         }
     );
+}
+
+/// Regression: with the text cache bounded below the number of labels a frame shows, the layouts of every frame were
+/// evicted by age and shaped again next frame, forever (the bound is 4096 by default, about 1,300 three-label rows).
+/// And `assemble` no longer asks for layouts it remembers, so the cache must be told they are still in use or it ages
+/// them out after `retain_frames` and the leaf asks again. Frames here run the real `begin_frame`/`end_frame` pacing.
+#[test]
+fn a_list_with_more_labels_than_the_text_cache_bound_shapes_nothing_when_unchanged() {
+    let style = TextStyle::new(13.0, kit_core::peniko::Color::WHITE);
+    let rows = 40;
+    let list = || {
+        column::<()>((0..rows).map(|i| {
+            row([
+                text(format!("Item {i}"), style.clone()),
+                text("On", style.clone()),
+                text(format!("Buy {i}"), style.clone()),
+            ])
+        }))
+    };
+    let mut fonts = kit_view::testing::text_system_bounded(10);
+    let mut layout = TaffyLayout::new();
+    let vp = viewport(800.0, 600.0);
+    let mut frame = |fonts: &mut CosmicText| {
+        let before = fonts.layout_calls();
+        fonts.begin_frame();
+        layout.layout(list(), vp, fonts, &NoWorld).unwrap();
+        fonts.end_frame();
+        fonts.layout_calls() - before
+    };
+    assert!(frame(&mut fonts) > 0);
+    // "On" is one layout; the other labels are distinct: 2 * rows + 1, well over the bound of 10.
+    let distinct = 2 * rows + 1;
+    assert_eq!(fonts.cached_layouts(), distinct);
+    for _ in 0..5 {
+        assert_eq!(frame(&mut fonts), 0, "an unchanged frame shapes nothing");
+        assert_eq!(fonts.cached_layouts(), distinct);
+    }
 }

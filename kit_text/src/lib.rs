@@ -13,7 +13,8 @@
 //!
 //! Layout cache: `layout` is idempotent per `(text, spans, style without its colour, max width)` and returns the same
 //! [`TextLayoutId`] while the entry is alive. Ids are valid until evicted; eviction happens only in
-//! [`CosmicText::end_frame`], and any `layout`, `buffer` or `caret_rect` call counts as a use. Accessors answer
+//! [`CosmicText::end_frame`], and any `layout`, `reuse`, `buffer` or `caret_rect` call counts as a use. `max_layouts` never evicts what the
+//! ending frame used (see [`CosmicText::end_frame`]). Accessors answer
 //! `None` for an id that is not live (never issued, or evicted).
 //!
 //! Missing fonts are never silent. A family that no loaded face provides is laid out with the configured generic sans
@@ -64,7 +65,8 @@ pub struct TextConfig {
     pub locale: String,
     /// Layouts untouched for this many frames are dropped by `end_frame`.
     pub retain_frames: u64,
-    /// Hard bound on cached layouts after `end_frame` (least recently used go first).
+    /// Bound on cached layouts after `end_frame` (least recently used go first), except that layouts used in the
+    /// frame that just ended are never evicted by it (see [`CosmicText::end_frame`]).
     pub max_layouts: usize,
     /// Hard bound on cached glyph rasters after `end_frame` (cleared wholesale when exceeded).
     pub max_rasters: usize,
@@ -263,19 +265,26 @@ impl CosmicText {
     }
 
     /// Evict layouts unused for `retain_frames` frames, then enforce the hard bounds.
+    ///
+    /// `max_layouts` never evicts a layout used in the frame that is ending: a frame that shows more distinct layouts
+    /// than the bound (a list past ~1,300 three-label rows against 4096) would otherwise lose some every frame, and
+    /// re-shape exactly those the next frame, forever. So the cache holds `max(max_layouts, layouts this frame used)`
+    /// after `end_frame`; only layouts last used in an earlier frame go to the bound, least recently used first. The
+    /// excess over `max_layouts` is therefore bounded by what one frame draws, and is gone the frame after it stops.
     pub fn end_frame(&mut self) {
         let (generation, retain) = (self.generation, self.config.retain_frames);
         self.laid
             .retain(|_, l| generation.saturating_sub(l.last_used.get()) < retain);
         if self.laid.len() > self.config.max_layouts {
-            let mut by_age: Vec<_> = self
+            let mut older: Vec<_> = self
                 .laid
                 .iter()
+                .filter(|(_, l)| l.last_used.get() < generation)
                 .map(|(id, l)| (l.last_used.get(), *id))
                 .collect();
-            by_age.sort_unstable();
+            older.sort_unstable();
             let excess = self.laid.len() - self.config.max_layouts;
-            by_age.iter().take(excess).for_each(|(_, id)| {
+            older.iter().take(excess).for_each(|(_, id)| {
                 self.laid.remove(id);
             });
         }
@@ -284,6 +293,15 @@ impl CosmicText {
         if self.rasters.len() > self.config.max_rasters {
             self.rasters.clear();
         }
+    }
+
+    /// The layout `id` names if it is live, counted as used this frame. For a caller that remembers the answer to a
+    /// `layout` call it would otherwise repeat (`kit_layout` keeps each text leaf's last layout): the id stands for
+    /// the full request, because ids are never reused and a layout leaves `by_key` when it is evicted, so a live id
+    /// is the layout that request would return. Not counted in [`CosmicText::layout_calls`]: it shapes nothing and
+    /// builds no key. `None` for an id that is not live (evicted: ask `layout` again).
+    pub fn reuse(&self, id: TextLayoutId) -> Option<TextLayout> {
+        self.touch(id).map(|l| TextLayout { id, size: l.size })
     }
 
     fn touch(&self, id: TextLayoutId) -> Option<&Laid> {

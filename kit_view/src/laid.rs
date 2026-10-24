@@ -1,8 +1,8 @@
 use crate::scroll::ScrollSpec;
 use crate::{
     A11y, Availability, Bindings, ClipSpec, CosmicText, Dismissal, Edit, FieldGeometry, FieldStyle,
-    FieldView, FocusClaim, FocusReturn, Layer, MaxWidth, Node, Paint, PortalAnchor, Shortcut,
-    TextLayout, TextWrap, Tooltip, WorldAnchor, WorldPoint,
+    FieldView, FocusClaim, FocusReturn, Layer, MaxWidth, Node, Paint, PortalAnchor, RichText,
+    Shortcut, TextLayout, TextStyle, TextWrap, Tooltip, WorldAnchor, WorldPoint,
 };
 use crate::{Image, ImageStyle};
 use kit_core::kurbo::{Point, Rect, Vec2};
@@ -332,6 +332,17 @@ impl<Msg> LaidOut<Msg> {
         placed: &[Placed],
         text: &mut CosmicText,
     ) -> Result<Self, LayoutError> {
+        Self::assemble_with(root, viewport, placed, text, &mut Fresh)
+    }
+
+    /// [`LaidOut::assemble`] with the text leaves shaped by `shaper` (see [`LeafShaper`]).
+    pub fn assemble_with(
+        root: Node<Msg>,
+        viewport: Viewport,
+        placed: &[Placed],
+        text: &mut CosmicText,
+        shaper: &mut impl LeafShaper,
+    ) -> Result<Self, LayoutError> {
         let expected = root.count();
         if placed.len() != expected {
             return Err(LayoutError::PlacedCount {
@@ -340,7 +351,7 @@ impl<Msg> LaidOut<Msg> {
             });
         }
         let mut next = 0;
-        let root = build(root, WidgetId::key("kit"), placed, &mut next, text);
+        let root = build(root, WidgetId::key("kit"), placed, &mut next, text, shaper);
         if let Some(id) = root.first_repeated_id() {
             return Err(LayoutError::DuplicateIdentity { id });
         }
@@ -355,6 +366,35 @@ impl<Msg> LaidOut<Msg> {
     }
 }
 
+/// Who answers "what is this `Node::Text` leaf's layout at its final width". `node` is the leaf's pre-order index in
+/// the `Placed` list. The answer must be what `text.layout(rich, style, width)` returns; a shaper may only skip the
+/// call by remembering that answer for the same text, style and width (`kit_layout` does, across frames).
+pub trait LeafShaper {
+    fn shape(
+        &mut self,
+        node: usize,
+        rich: &RichText,
+        style: &TextStyle,
+        width: MaxWidth,
+        text: &mut CosmicText,
+    ) -> TextLayout;
+}
+
+/// Asks the text system every time (which has its own cache).
+pub struct Fresh;
+impl LeafShaper for Fresh {
+    fn shape(
+        &mut self,
+        _node: usize,
+        rich: &RichText,
+        style: &TextStyle,
+        width: MaxWidth,
+        text: &mut CosmicText,
+    ) -> TextLayout {
+        text.layout(rich, style, width)
+    }
+}
+
 /// `path` is the node's tree path (root id, then one `index` per level): the `Identity::Positional` id.
 fn build<Msg>(
     node: Node<Msg>,
@@ -362,19 +402,21 @@ fn build<Msg>(
     placed: &[Placed],
     next: &mut usize,
     text: &mut CosmicText,
+    shaper: &mut impl LeafShaper,
 ) -> LaidNode<Msg> {
     let here = placed[*next];
+    let this = *next;
     *next += 1;
     let rect = here.rect;
     let kind = match node {
         Node::Stack { children, .. } => LaidKind::Stack {
-            children: build_all(children, path, placed, next, text),
+            children: build_all(children, path, placed, next, text, shaper),
         },
         Node::Panel {
             surface, children, ..
         } => LaidKind::Panel {
             surface,
-            children: build_all(children, path, placed, next, text),
+            children: build_all(children, path, placed, next, text, shaper),
         },
         Node::Text {
             text: rich,
@@ -388,7 +430,7 @@ fn build<Msg>(
                 }
             };
             LaidKind::Text {
-                layout: text.layout(&rich, &text_style, width),
+                layout: shaper.shape(this, &rich, &text_style, width, text),
                 color: text_style.color,
             }
         }
@@ -409,7 +451,7 @@ fn build<Msg>(
             a11y,
             tooltip,
             availability,
-            child: Box::new(build(*child, path.index(0), placed, next, text)),
+            child: Box::new(build(*child, path.index(0), placed, next, text, shaper)),
         },
         Node::Scroll {
             identity,
@@ -419,7 +461,7 @@ fn build<Msg>(
         } => LaidKind::Scroll {
             id: identity.resolve(path),
             spec,
-            child: Box::new(build(*child, path.index(0), placed, next, text)),
+            child: Box::new(build(*child, path.index(0), placed, next, text, shaper)),
         },
         Node::TextField {
             identity,
@@ -457,12 +499,12 @@ fn build<Msg>(
         } => LaidKind::Layer {
             opacity,
             clip,
-            child: Box::new(build(*child, path.index(0), placed, next, text)),
+            child: Box::new(build(*child, path.index(0), placed, next, text, shaper)),
         },
         Node::World { anchor, child } => LaidKind::World {
             anchor,
             shown: here.shown,
-            child: Box::new(build(*child, path.index(0), placed, next, text)),
+            child: Box::new(build(*child, path.index(0), placed, next, text, shaper)),
         },
         Node::Portal {
             layer,
@@ -475,7 +517,7 @@ fn build<Msg>(
             anchor,
             dismissal,
             returns,
-            child: Box::new(build(*child, path.index(0), placed, next, text)),
+            child: Box::new(build(*child, path.index(0), placed, next, text, shaper)),
         },
     };
     LaidNode { rect, kind }
@@ -487,10 +529,11 @@ fn build_all<Msg>(
     placed: &[Placed],
     next: &mut usize,
     text: &mut CosmicText,
+    shaper: &mut impl LeafShaper,
 ) -> Vec<LaidNode<Msg>> {
     children
         .into_iter()
         .enumerate()
-        .map(|(index, c)| build(c, path.index(index as u64), placed, next, text))
+        .map(|(index, c)| build(c, path.index(index as u64), placed, next, text, shaper))
         .collect()
 }

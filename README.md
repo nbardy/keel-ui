@@ -206,11 +206,14 @@ maturity matter most; choose the kit when you prefer a component tree with data-
   auto-repeat (the host sends one `Move` per step it wants), and arrow-key `Key` events still walk Tab order rather
   than moving spatially unless the host maps them to `Nav`.
 - **Long plain lists are slow; long lists can be virtualised.** A plain `column` is walked and laid out every row every
-  frame. `TaffyLayout` keeps its taffy tree between frames, so a list whose rows did not change costs 3.5 to 4.4 us per
-  row (100 rows: 0.36 ms; 1,000 rows: 4.4 ms) and a changed label costs about the same; a list whose shape changed
-  (rows inserted or removed before the end, a different screen) costs 20 to 25 us per row, and the first frame too
-  ([`docs/BENCH.md`](docs/BENCH.md), "Layout keeps its taffy tree", Apple M4, rows of a label, a checkbox and a button;
-  the whole-frame table there predates it, 2.4 ms per frame at 100 rows). A list row is 11 laid nodes and costs about
+  frame. `TaffyLayout` keeps its taffy tree and each text leaf's layout between frames, so a list whose rows did not
+  change costs 3 to 5 us per row of layout (100 rows: 0.31 ms; 1,000 rows: 4.7 ms) and a changed label costs about the
+  same; a list whose shape changed (rows inserted or removed before the end, a different screen) costs 20 to 25 us per
+  row, and the first frame too. A whole plain-list frame (view build, layout and paint, without the GPU) is 0.47 ms at
+  100 rows, 7.2 ms at 1,000 and 117 ms at 10,000 on an Apple M4 that was not idle (load average 11 to 13;
+  [`docs/BENCH.md`](docs/BENCH.md), "Current results"); rows are a label, a checkbox and a button, and the text cache
+  keeps every layout a frame uses even above `TextConfig::max_layouts`, so a long list no longer re-shapes its labels
+  every frame. A list row is 11 laid nodes and costs about
   2.2x the HUD's per-node figure because 45% of its nodes are nested flex containers, not because of load; the game's
   58-node in-match HUD lays out in about 23 us (layout only, text layouts cached). `virtual_items` (and `table`, which uses the same core) builds and lays
   out only the rows in view plus 3 of overscan on each side: its per-frame cost does not grow with the row count (10,000

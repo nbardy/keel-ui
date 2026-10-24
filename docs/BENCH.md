@@ -1,8 +1,69 @@
 # Whole-frame benchmark: kit vs egui (CPU side)
 
+**Current numbers are in "Current results (2026-10-25)" below.** The first tables (2026-10-24) are kept as history:
+they predate both layout changes (the text-call memo and the kept taffy tree) and the `assemble`/text-cache change.
+
+## Current results (2026-10-25)
+
+`cargo run --release -p kit_bench --bin frame_bench`, release build, Apple M4, at the head of `kit/assemble` (kept taffy
+tree, remembered text layouts, text cache that keeps a frame's layouts). **Load: not quiet.** The machine had other
+jobs on it the whole session: the 1-minute load average was 13.4 at the start of this run and 11.3 at its end (the
+15-minute average 17), against 4 to 7 in the "quiet" runs of the layout-tree section. Three runs of each binary were
+taken back to back, alternating (load averages 9.6 to 18 at their starts); the first two pairs read up to 8x apart at
+1,000 rows (the 1,000-row layout median was 36.8 ms in one run of the new binary and 4.7 ms in the next), so only the
+last pair is quoted, and the others are the reason to read this as indicative: ratios within 10% are noise here. Median ms
+per frame, one process, 200 frames (50 at 10,000 rows):
+
+| Rows | Phase | Frames | Median (ms) | p95 (ms) |
+|---:|---|---:|---:|---:|
+| 100 | kit view build | 200 | 0.139 | 0.141 |
+| 100 | kit layout | 200 | 0.311 | 0.317 |
+| 100 | kit paint | 200 | 0.020 | 0.021 |
+| 100 | kit GPU record | 200 | 0.634 | 0.666 |
+| 100 | kit build + layout + paint | 200 | 0.471 | 0.477 |
+| 100 | kit total (incl. GPU record) | 200 | 1.078 | 1.140 |
+| 100 | egui run + tessellate (CPU only) | 200 | 0.241 | 0.243 |
+| 1000 | kit view build | 200 | 2.039 | 2.271 |
+| 1000 | kit layout | 200 | 4.653 | 5.841 |
+| 1000 | kit paint | 200 | 0.452 | 0.617 |
+| 1000 | kit GPU record | 200 | 2.781 | 3.069 |
+| 1000 | kit build + layout + paint | 200 | 7.182 | 8.656 |
+| 1000 | kit total (incl. GPU record) | 200 | 9.988 | 11.551 |
+| 1000 | egui run + tessellate (CPU only) | 200 | 1.957 | 1.966 |
+| 10000 | kit view build | 50 | 23.573 | 25.329 |
+| 10000 | kit layout | 50 | 79.927 | 83.954 |
+| 10000 | kit paint | 50 | 13.616 | 15.023 |
+| 10000 | kit GPU record | 50 | 20.221 | 22.004 |
+| 10000 | kit build + layout + paint | 50 | 117.069 | 124.190 |
+| 10000 | kit total (incl. GPU record) | 50 | 137.039 | 146.302 |
+| 10000 | egui run + tessellate (CPU only) | 50 | 21.547 | 22.754 |
+
+Same pair, before (head of `kit/layout-tree`, i.e. before this change) against after, the plain list only, layout and
+whole frame (build + layout + paint), median ms:
+
+| Rows | layout, before | layout, after | build + layout + paint, before | same, after |
+|---:|---:|---:|---:|---:|
+| 100 | 0.327 | 0.311 | 0.470 | 0.471 |
+| 1000 | 5.224 | 4.653 | 7.655 | 7.182 |
+| 10000 | 110.751 | 79.927 | 149.879 | 117.069 |
+
+At 100 rows the change is inside the noise. At 10,000 rows (20,001 distinct labels, five times the old text cache bound)
+layout is about 28% faster and the frame about 22%: before, the bound evicted layouts that the next frame needed and the
+frame re-shaped them. Counted rather than timed (the load does not touch these): an unchanged frame now asks the text
+system for nothing (it asked once per text leaf: `engines.rs` pins 0 calls), and a list of 81 distinct labels against a bound
+of 10 re-shapes nothing on an unchanged frame. The `layout_cost` steady/one-edit rows, four back to back pairs at load
+15 to 24, were not separable from noise either (HUD steady minimum 131 to 268 us before, 113 to 217 after, list 100 rows
+308 to 584 after against 377 to 717 before, medians inside each other's range); the layout phase is now mostly the
+`Node` walk and style comparison, which `assemble` no longer adds to.
+
+The same run's `kit virtual` lines (idle window of `virtual_items`, not repeated here) read 0.08 to 0.16 ms of layout at
+every N. The table above omits them; the egui rows in it are CPU only, as before.
+
+## Results (2026-10-24, before both layout changes)
+
 Run on 2026-10-24 (13:4x local). One run, release build.
 
-## Results
+### Phases, 2026-10-24
 
 Kit: build, layout, paint and GPU record, as separate phases. egui: `run_ui` plus `tessellate`, CPU only.
 Median and p95 are nearest-rank, in milliseconds, per frame.
@@ -61,7 +122,7 @@ before quoting an absolute figure.
 - CPU: Apple M4
 - Memory: 24 GiB
 - Adapter: Apple M4 (Metal), headless wgpu device, no window
-- Date: 2026-10-24
+- Date: 2026-10-24 (first tables), 2026-10-25 (current results)
 
 ## Command
 
@@ -186,7 +247,32 @@ and 2.2-3.8 us for the list: the ratio (2.2 to 2.7x) survives load, only the abs
 
 Guards: `kit_layout/tests/engines.rs::an_unchanged_frame_costs_taffy_nothing_and_an_edited_label_costs_one_leaf` (the
 counted `Reuse` of an unchanged, edited, longer, shorter list and a swapped text system, and that an unchanged frame asks
-the text system once per leaf) and `kit_layout/tests/generated.rs::a_kept_layout_agrees_with_a_fresh_one_after_every_kind_of_change`
+the text system once per leaf; since the section below, not at all) and `kit_layout/tests/generated.rs::a_kept_layout_agrees_with_a_fresh_one_after_every_kind_of_change`
 (300 random trees, five frames each, kept layout against a fresh one, rect for rect).
-Not done: retaining the shaped text between frames so `assemble` stops hashing a key per label (needs a way to keep a
+Not done (done in the next section): retaining the shaped text between frames so `assemble` stops hashing a key per label (needs a way to keep a
 `CosmicText` layout alive without asking for it), and `TextConfig::max_layouts` (4,096) still evicts above ~1,300 rows.
+
+## `assemble` remembers text layouts; the text cache keeps a frame's layouts, 2026-10-25
+
+After the kept taffy tree, an unchanged frame's remaining text cost was `LaidOut::assemble` asking `CosmicText::layout`
+for every text leaf at its final width (a key build and a hash each, to get back what the leaf had last frame).
+`TaffyLayout` now keeps, on each kept text leaf, the layout `assemble` last got and the width it was for
+(`Shaped`); `assemble_with` takes a `LeafShaper` and `TaffyLayout` passes one that answers from the kept tree when the
+leaf's text and style (the `Held` comparison that already decides remeasuring) and final width are unchanged, marking
+the layout used through the new `CosmicText::reuse`. Counted: an unchanged 50-row list asked the text system 150 times
+(one per text leaf), now 0; an edited label costs its own measure and shape and nothing else.
+
+Not done, on purpose: rebuilding the `LaidNode` tree. `assemble` consumes the new `Node` tree and moves its bindings,
+closures and styles (`Msg` is not `Clone`) into `LaidKind`, and `kit_input` routing and `kit_paint` read the result by
+reference with a lifetime of the frame, so the tree is new every frame by construction; what could be skipped was the
+text, and that is skipped. `first_repeated_*` still sort a `Vec` of the ids and shortcuts each frame.
+
+`TextConfig::max_layouts` used to evict by age alone. A list past about 1,300 three-label rows has more distinct labels
+than the bound (4,096), so every `end_frame` evicted some that the next frame needed, and the frame shaped them
+again, every frame. `end_frame` now evicts only layouts last used in an earlier frame, least recently used first, so the
+cache holds `max(max_layouts, layouts the ending frame used)`. The excess is bounded by what one frame draws and goes the
+frame after it stops drawing it. Pinned by `kit_text/tests/text.rs` (`frame_eviction_drops_unused_and_bounds_the_cache`
+now checks the bound a frame after the burst; `a_frame_using_more_layouts_than_the_bound_keeps_all_of_them`) and, through
+the real layout and `begin_frame`/`end_frame` pacing, `kit_layout/tests/engines.rs::a_list_with_more_labels_than_the_text_cache_bound_shapes_nothing_when_unchanged`.
+`generated.rs` now also compares every text leaf's `TextLayout` (id and size) between the kept and the fresh layout.
+

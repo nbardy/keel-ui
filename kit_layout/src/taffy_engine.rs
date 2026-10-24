@@ -16,8 +16,9 @@ use kit_core::{Axis, Viewport};
 use kit_view::taffy as tf;
 use kit_view::taffy::style_helpers::TaffyAuto;
 use kit_view::{
-    Anchor, AnchorH, AnchorV, Content, CosmicText, LaidOut, LayoutError, Node, Percent, Placed,
-    Placement, Projection, SafeArea, Shown, Style, WorldProjector, px,
+    Anchor, AnchorH, AnchorV, Content, CosmicText, LaidOut, LayoutError, LeafShaper, MaxWidth,
+    Node, Percent, Placed, Placement, Projection, RichText, SafeArea, Shown, Style, TextLayout,
+    TextStyle, WorldProjector, px,
 };
 
 #[derive(Copy, Clone)]
@@ -172,7 +173,7 @@ impl TaffyLayout {
     ) -> Result<LaidOut<Msg>, LayoutError> {
         check_cells(&root)?;
         let count = root.count();
-        let placed = {
+        let (placed, slots) = {
             let mut frame = Frame {
                 viewport,
                 world,
@@ -195,9 +196,20 @@ impl TaffyLayout {
                 slots,
                 floating,
             };
-            solving.solve(&mut self.tree, &self.kept, main, &mut leaves, text)
+            let placed = solving.solve(&mut self.tree, &self.kept, main, &mut leaves, text);
+            (placed, solving.slots)
         };
-        let mut laid = LaidOut::assemble(root, viewport, &placed, text)?;
+        let homes = slots.iter().map(Home::of).collect();
+        let mut laid = LaidOut::assemble_with(
+            root,
+            viewport,
+            &placed,
+            text,
+            &mut Recall {
+                kept: &mut self.kept,
+                homes,
+            },
+        )?;
         crate::portals::settle(&mut laid)?;
         Ok(laid)
     }
@@ -310,8 +322,75 @@ struct Kept {
 struct KeptNode {
     id: tf::NodeId,
     hang: Hang,
+    /// The layout `LaidOut::assemble` last got for this node, when it is a text leaf; see [`Recall`].
+    shaped: Shaped,
     /// What the node was last measured with; the taffy node's context is its index in `nodes`.
     held: Held,
+}
+
+/// A text leaf's last layout at its final width. Valid exactly as long as `held` is: it answers a request made of the
+/// leaf's text and style (both in `Held`) and the width.
+#[derive(Copy, Clone)]
+enum Shaped {
+    /// Not shaped yet since the leaf was created or its text or style changed (and always, for other kinds of node).
+    Not,
+    At {
+        width: MaxWidth,
+        layout: TextLayout,
+    },
+}
+
+/// Where a pre-order node of the `Placed` list lives in the kept tree.
+#[derive(Copy, Clone)]
+enum Home {
+    Kept(usize),
+    /// Culled, or a wrapper that shares its child's box: no kept node.
+    Elsewhere,
+}
+
+impl Home {
+    fn of(slot: &Slot) -> Home {
+        match slot {
+            Slot::Laid { entry, .. } => Home::Kept(*entry),
+            Slot::Culled | Slot::Follow => Home::Elsewhere,
+        }
+    }
+}
+
+/// `assemble`'s text leaves, answered from the kept tree. `assemble` re-asks the text system for every text leaf at its
+/// final width on every frame, and an unchanged frame had nothing else left to do with the text: each ask builds and
+/// hashes a full cache key (text copy, span list, attrs) to get back the layout the leaf had last frame. A leaf whose
+/// text, style and width are what it was shaped with (`Held` is dropped on any change of the first two) keeps that
+/// layout, and `CosmicText::reuse` marks it used so the text cache does not age it out. If the cache lost it anyway
+/// (a frame that never called `layout` let it age out), the leaf is asked again.
+struct Recall<'a> {
+    kept: &'a mut Kept,
+    homes: Vec<Home>,
+}
+
+impl LeafShaper for Recall<'_> {
+    fn shape(
+        &mut self,
+        node: usize,
+        rich: &RichText,
+        style: &TextStyle,
+        width: MaxWidth,
+        text: &mut CosmicText,
+    ) -> TextLayout {
+        match self.homes[node] {
+            Home::Elsewhere => text.layout(rich, style, width),
+            Home::Kept(entry) => {
+                let slot = &mut self.kept.nodes[entry].shaped;
+                let remembered = match *slot {
+                    Shaped::At { width: w, layout } if w == width => text.reuse(layout.id),
+                    Shaped::At { .. } | Shaped::Not => None,
+                };
+                let layout = remembered.unwrap_or_else(|| text.layout(rich, style, width));
+                *slot = Shaped::At { width, layout };
+                layout
+            }
+        }
+    }
 }
 
 /// Which side of the first difference a node is on.
@@ -379,6 +458,7 @@ impl<'a, 'n> Sink<'a, 'n> {
                 }
                 if !kept.held.is(leaf) {
                     kept.held = leaf.hold();
+                    kept.shaped = Shaped::Not;
                     self.tree.mark_dirty(kept.id).expect("kept node is live");
                     self.reuse.remeasured += 1;
                 }
@@ -400,6 +480,7 @@ impl<'a, 'n> Sink<'a, 'n> {
         self.kept.nodes.push(KeptNode {
             id,
             hang,
+            shaped: Shaped::Not,
             held: leaf.hold(),
         });
         self.reuse.created += 1;

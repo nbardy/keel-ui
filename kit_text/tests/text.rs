@@ -239,6 +239,8 @@ fn frame_eviction_drops_unused_and_bounds_the_cache() {
         "a dead id is not live, never someone else's layout"
     );
 
+    // Past the bound, only layouts last used in an earlier frame go; the ten used now are all kept (see the next test),
+    // and the frame after them evicts down to the bound.
     t.begin_frame();
     for i in 0..10 {
         t.layout(
@@ -248,11 +250,43 @@ fn frame_eviction_drops_unused_and_bounds_the_cache() {
         );
     }
     t.end_frame();
+    t.begin_frame();
+    t.end_frame();
     assert!(
         t.cached_layouts() <= 3,
         "hard bound violated: {}",
         t.cached_layouts()
     );
+}
+
+/// Regression: `max_layouts` evicted by age alone, so a frame using more distinct layouts than the bound (about 1,300
+/// three-label list rows against 4096) lost the least recently used of them at every `end_frame` and re-shaped them
+/// next frame, every frame. A frame's layouts must survive its own `end_frame`, and an unchanged next frame must
+/// shape nothing.
+#[test]
+fn a_frame_using_more_layouts_than_the_bound_keeps_all_of_them() {
+    let config = TextConfig {
+        max_layouts: 3,
+        ..TextConfig::default()
+    };
+    let mut t = inter(config);
+    let st = style(16.0);
+    let labels: Vec<_> = (0..10)
+        .map(|i| RichText::plain(format!("row {i}")))
+        .collect();
+    let frame = |t: &mut CosmicText| {
+        t.begin_frame();
+        let ids: Vec<_> = labels
+            .iter()
+            .map(|l| t.layout(l, &st, MaxWidth::Unbounded).id)
+            .collect();
+        t.end_frame();
+        ids
+    };
+    let first = frame(&mut t);
+    assert!(first.iter().all(|id| t.is_live(*id)));
+    let second = frame(&mut t);
+    assert_eq!(first, second, "an unchanged frame re-shapes nothing");
 }
 
 #[test]

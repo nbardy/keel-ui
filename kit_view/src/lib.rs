@@ -24,8 +24,8 @@ pub use kit_text::{
     TextLayoutId, TextStyle, TextValue, Unit, Weight, Wrap as TextWrap,
 };
 pub use laid::{
-    Control, LaidKind, LaidNode, LaidOut, LayoutError, NoWorld, Placed, Projection, Reach, Shown,
-    WorldProjector,
+    Control, Fresh, LaidKind, LaidNode, LaidOut, LayoutError, LeafShaper, NoWorld, Placed,
+    Projection, Reach, Shown, WorldProjector,
 };
 pub use node::{
     A11y, Availability, Bindings, ClipSpec, ContextSpec, DragPayload, DragSpec, DropSpec, Dropped,

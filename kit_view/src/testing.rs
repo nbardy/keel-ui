@@ -10,6 +10,15 @@ pub fn text_system() -> CosmicText {
     CosmicText::new(inter::source(), TextConfig::default()).expect("the bundled Inter loads")
 }
 
+/// [`text_system`] whose layout cache is bounded at `max_layouts` (`TextConfig::max_layouts`).
+pub fn text_system_bounded(max_layouts: usize) -> CosmicText {
+    let config = TextConfig {
+        max_layouts,
+        ..TextConfig::default()
+    };
+    CosmicText::new(inter::source(), config).expect("the bundled Inter loads")
+}
+
 /// Assemble a tree from explicit pre-order rects (all visible). Panics are impossible by contract: a wrong count is
 /// returned as the typed `LayoutError`, which tests unwrap.
 pub fn laid_out<Msg>(root: Node<Msg>, rects: &[Rect]) -> LaidOut<Msg> {

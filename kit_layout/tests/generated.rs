@@ -205,6 +205,19 @@ fn always_emit_one_placed_per_node_in_a_consistent_order() {
     }
 }
 
+/// Every text leaf's layout, pre-order. One text system answers both layouts in the test, so a request that is the same
+/// gets the same id: a leaf that kept a stale layout (old text, or another width) differs here and not in its rect.
+fn text_layouts(l: &LaidOut<()>) -> Vec<kit_view::TextLayout> {
+    l.root
+        .descendants()
+        .into_iter()
+        .filter_map(|n| match &n.kind {
+            LaidKind::Text { layout, .. } => Some(*layout),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The layout keeps its taffy tree between frames. Whatever it keeps, a frame must come out exactly as if the layout
 /// had never seen the previous one: same tree again, same shape with other text, another viewport, another shape.
 #[test]
@@ -224,16 +237,23 @@ fn a_kept_layout_agrees_with_a_fresh_one_after_every_kind_of_change() {
             let mut vp = Viewport::new(Size::new(width, 480.0), 2.0);
             vp.safe_area = Insets::new(0.0, top, 0.0, 10.0);
             let tree = || tree(&mut Lcg(seed), 4, false, salt);
+            fonts.begin_frame();
             let fresh = TaffyLayout::new()
                 .layout(tree(), vp, &mut fonts, &Plane)
                 .unwrap_or_else(|e| panic!("seed {seed}: {e:?}"));
             let again = kept
                 .layout(tree(), vp, &mut fonts, &Plane)
                 .unwrap_or_else(|e| panic!("seed {seed}: {e:?}"));
+            fonts.end_frame();
             assert_eq!(
                 pre_order(&again),
                 pre_order(&fresh),
                 "seed {seed} salt {salt} width {width}"
+            );
+            assert_eq!(
+                text_layouts(&again),
+                text_layouts(&fresh),
+                "text, seed {seed} salt {salt} width {width}"
             );
             let Reuse {
                 created, removed, ..
