@@ -1,0 +1,49 @@
+[package]
+name = "kit_web"
+description = "Keel UI kit browser adapter: DOM events to kit InputEvents, the hidden IME and clipboard textarea, and a WebGPU canvas host loop that draws only when the kit asks (wasm + WebGPU), plus a runnable starter."
+keywords = ["gui", "wasm", "webgpu", "wgpu", "ui"]
+categories = ["gui", "game-development", "wasm"]
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# The conversions are plain functions over plain values and build natively (their tests run natively). Everything
+# that touches the browser is behind `cfg(target_arch = "wasm32")`, so no native build sees wasm-bindgen, js-sys or
+# web-sys (CI checks this for every kit crate).
+[dependencies]
+kit_core.workspace = true
+kit_input.workspace = true
+kit_view.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Exact: the `wasm-bindgen` CLI that post-processes the module must be this version (`kit_web/build.sh` checks).
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+  "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Node", "Event", "EventTarget",
+  "MouseEvent", "PointerEvent", "WheelEvent", "KeyboardEvent", "InputEvent", "ClipboardEvent", "DataTransfer",
+  "FocusEvent", "CompositionEvent", "HtmlTextAreaElement", "FocusOptions", "CssStyleDeclaration", "DomRect",
+  "Navigator", "Performance", "console", "ResizeObserver", "ResizeObserverEntry",
+] }
+wgpu = { version = "30", default-features = false, features = ["webgpu", "wgsl"] }
+
+# The starter example: the same app as `kit_winit`'s, compiled for the browser (see examples/starter.rs).
+[dev-dependencies]
+kit_state.workspace = true
+kit_layout.workspace = true
+kit_paint.workspace = true
+kit_widgets.workspace = true
+kit_wgpu.workspace = true
+wgpu = { version = "30", default-features = false, features = ["wgsl"] }
+
+[[example]]
+name = "starter"
+# A wasm module for the page to load; on native the example is an empty crate (everything is wasm32-only).
+crate-type = ["cdylib"]

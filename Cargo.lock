@@ -1049,6 +1049,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "kit_web"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "kit_core",
+ "kit_input",
+ "kit_layout",
+ "kit_paint",
+ "kit_state",
+ "kit_view",
+ "kit_wgpu",
+ "kit_widgets",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
 name = "kit_wgpu"
 version = "0.1.0"
 dependencies = [
