@@ -295,16 +295,16 @@ fn main() {
         }
     }
     println!(
-        "| workload | mode | nodes | text | containers | other leaves | median us | min us | ns/node (median) | ns/node (min) | ns/text leaf (min) |"
+        "| workload | mode | nodes | text | containers (stack/panel) | other leaves | median us | min us | ns/node (median) | ns/node (min) | ns/text leaf (min) | ns/container (min) |"
     );
-    println!("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+    println!("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
     for w in &work {
         for (mode, times) in MODES.iter().zip(&w.times).filter(|(_, t)| !t.is_empty()) {
             let med = median(times).as_secs_f64() * 1e6;
             let min = times.iter().min().expect("frames ran").as_secs_f64() * 1e6;
             let c = &w.counts;
             println!(
-                "| {} | {} | {} | {} | {} | {} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} |",
+                "| {} | {} | {} | {} | {} | {} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} |",
                 w.name,
                 mode,
                 c.nodes,
@@ -315,7 +315,8 @@ fn main() {
                 min,
                 med * 1e3 / c.nodes as f64,
                 min * 1e3 / c.nodes as f64,
-                min * 1e3 / c.text as f64
+                min * 1e3 / c.text as f64,
+                min * 1e3 / c.containers as f64
             );
         }
     }

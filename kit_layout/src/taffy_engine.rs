@@ -168,12 +168,13 @@ impl TaffyLayout {
         world: &dyn WorldProjector,
     ) -> Result<LaidOut<Msg>, LayoutError> {
         check_cells(&root)?;
+        let count = root.count();
         let placed = {
             let mut frame = Frame {
                 viewport,
                 world,
-                plan: Vec::with_capacity(root.count()),
-                slots: Vec::with_capacity(root.count()),
+                plan: Vec::with_capacity(count),
+                slots: Vec::with_capacity(count),
                 floating: Vec::new(),
             };
             let main = frame.build(&root, Role::Root, true, Hang::Top);
