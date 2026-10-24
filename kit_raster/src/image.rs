@@ -1,7 +1,7 @@
 use crate::convert;
 use kit_core::kurbo::{Affine, Rect, RoundedRect, Shape as _};
 use kit_paint::RenderError;
-use kit_view::{Filter, Image, ImageKey, ImagePixels, ImageSource, ImageStyle};
+use kit_view::{Filter, Image, ImageKey, ImagePixels, ImageRegion, ImageSource, ImageStyle};
 use std::collections::BTreeMap;
 use tiny_skia::{FilterQuality, Paint, Pattern, Pixmap, SpreadMode, Transform};
 
@@ -44,9 +44,12 @@ impl Images {
     }
 }
 
+/// `texels` is the region the GPU samples too (`kit_paint::image_texels`): only those texels are tinted into the
+/// tile, so the CPU and the GPU sample the same pixels and clamp at the same edges.
 pub(crate) fn draw(
     target: &mut Pixmap,
     pixels: &ImagePixels,
+    texels: ImageRegion,
     rect: Rect,
     style: ImageStyle,
     scale: f32,
@@ -54,24 +57,26 @@ pub(crate) fn draw(
     if rect.width() <= 0.0 || rect.height() <= 0.0 {
         return Ok(());
     }
-    let size = pixels.size();
-    let mut tile = Pixmap::new(size.width(), size.height())
+    let rw = texels.width() as usize;
+    let mut tile = Pixmap::new(texels.width(), texels.height())
         .ok_or_else(|| RenderError::Backend("image allocation failed".into()))?;
     let [tr, tg, tb, ta] = style.tint.components;
-    for (src, dst) in pixels
-        .rgba()
-        .chunks_exact(4)
-        .zip(tile.data_mut().chunks_exact_mut(4))
-    {
-        let a = f32::from(src[3]) / 255.0 * ta;
-        for (i, tint) in [tr, tg, tb].into_iter().enumerate() {
-            dst[i] = (f32::from(src[i]) * tint * a).round() as u8;
+    let stride = pixels.size().width() as usize * 4;
+    let first_column = texels.x() as usize * 4;
+    for (row, dst_row) in tile.data_mut().chunks_exact_mut(rw * 4).enumerate() {
+        let start = (texels.y() as usize + row) * stride + first_column;
+        let src_row = &pixels.rgba()[start..start + rw * 4];
+        for (src, dst) in src_row.chunks_exact(4).zip(dst_row.chunks_exact_mut(4)) {
+            let a = f32::from(src[3]) / 255.0 * ta;
+            for (i, tint) in [tr, tg, tb].into_iter().enumerate() {
+                dst[i] = (f32::from(src[i]) * tint * a).round() as u8;
+            }
+            dst[3] = (255.0 * a).round() as u8;
         }
-        dst[3] = (255.0 * a).round() as u8;
     }
     let to_rect = Transform::from_scale(
-        rect.width() as f32 / size.width() as f32,
-        rect.height() as f32 / size.height() as f32,
+        rect.width() as f32 / texels.width() as f32,
+        rect.height() as f32 / texels.height() as f32,
     )
     .post_translate(rect.x0 as f32, rect.y0 as f32);
     let quality = match style.filter {

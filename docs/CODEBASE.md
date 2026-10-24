@@ -16,7 +16,10 @@ measured the same way on the tree after the DOM UI was deleted: every line of `s
 `kit_view::image(Image, ImageStyle) -> Node<Msg>` is a leaf, measured intrinsically from its texel size by
 `kit_layout`, then sized by taffy like text or a shape. `Fit::{Stretch, Contain}` computes the painted rect;
 `kit_paint` emits `Draw::Image { image, rect, style }`. The style carries tint, nearest/linear filtering and
-rounded corners. Layout bounds remain the whole node box when Contain letterboxes.
+rounded corners. Layout bounds remain the whole node box when Contain letterboxes. `ImageStyle::crop` is `Crop::Whole`
+or `Crop::Region(ImageRegion)`: layout measures the crop's size, and `kit_paint::image_texels` checks the region
+against the image on both backends (empty regions fail at `ImageRegion::new`, out-of-bounds ones at draw). The CPU
+tints and tiles only the region; the GPU sets the instance UVs to the region, and the shader clamps inside them.
 
 `ImagePixels::new(w, h, rgba)` validates straight-alpha sRGB RGBA8 and mints a process-unique key. Its clones
 share bytes and identity. Each backend owns a registry: `register_pixels(&ImagePixels) -> Result<Image,

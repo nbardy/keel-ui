@@ -596,7 +596,7 @@ fn drag_ghost() -> Fixture {
 
 /// Pixel art, bilinear scaling, containment, tint, rounded corners, clipping and overlapping group opacity.
 fn images() -> Fixture {
-    use kit_view::{Filter, ImagePixels, ImageStyle, image};
+    use kit_view::{Filter, ImagePixels, ImageRegion, ImageStyle, image};
     let pixels = ImagePixels::new(
         4,
         2,
@@ -642,9 +642,26 @@ fn images() -> Fixture {
         r(200.0, 95.0, 90.0, 75.0),
         image(handle, ImageStyle::contain().filter(Filter::Nearest)),
     );
+    // Sprite-sheet regions: a stretched sub-rectangle and a contained one with rounded corners.
+    let sprite = leaf(
+        r(10.0, 160.0, 120.0, 16.0),
+        image(
+            handle,
+            ImageStyle::stretch().region(ImageRegion::new(1, 0, 2, 2).expect("region")),
+        ),
+    );
+    let sprite_contain = leaf(
+        r(150.0, 150.0, 50.0, 25.0),
+        image(
+            handle,
+            ImageStyle::contain()
+                .region(ImageRegion::new(2, 0, 2, 2).expect("region"))
+                .rounded(4.0),
+        ),
+    );
     let root = parent(
         r(0.0, 0.0, 320.0, 180.0),
-        vec![nearest, smooth, clipped, contained],
+        vec![nearest, smooth, clipped, contained, sprite, sprite_contain],
         column,
     );
     let mut fx = picture(lay(root, size), &memory(size), |_| {});

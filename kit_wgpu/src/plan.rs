@@ -15,7 +15,9 @@ use crate::tess::{Mesh, TessCache};
 use kit_core::kurbo::{Affine, Point, Rect, RoundedRectRadii};
 use kit_core::peniko::{Brush, Color};
 use kit_core::{Border, Clip, Shadow};
-use kit_paint::{Draw, DrawList, RenderError, TOFU_STROKE, caret_bar, em, layout_glyphs, tofu_box};
+use kit_paint::{
+    Draw, DrawList, RenderError, TOFU_STROKE, caret_bar, em, image_texels, layout_glyphs, tofu_box,
+};
 use kit_view::{CosmicText, Filter, ImageKey, TextLayoutId};
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -437,14 +439,20 @@ impl<'a> Planner<'a> {
             Draw::PopLayer => self.pop_layer(),
             Draw::Image { image, rect, style } => {
                 self.images.get(*image)?;
+                let texels = image_texels(*image, style.crop)?;
                 let r = scaled(*rect, self.scale);
                 if m > 0.0 && r.width() > 0.0 && r.height() > 0.0 {
-                    let mut inst = tex_inst(
-                        r,
-                        [0.0, 0.0, 1.0, 1.0],
-                        self.out.premul(style.tint, m),
-                        KIND_PREMUL,
-                    );
+                    // Normalised over the whole texture: the region's edges are the UV edges, and the shader
+                    // clamps inside them, so a neighbour in the same texture never bleeds in.
+                    let (tw, th) = (image.size().width() as f32, image.size().height() as f32);
+                    let (x0, y0) = (texels.x() as f32 / tw, texels.y() as f32 / th);
+                    let uv = [
+                        x0,
+                        y0,
+                        (texels.x() + texels.width()) as f32 / tw,
+                        (texels.y() + texels.height()) as f32 / th,
+                    ];
+                    let mut inst = tex_inst(r, uv, self.out.premul(style.tint, m), KIND_PREMUL);
                     let cap = r.width().min(r.height()) / 2.0;
                     for (dst, radius) in inst[16..20].iter_mut().zip([
                         style.radii.top_left,

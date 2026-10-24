@@ -6,7 +6,8 @@ use kit_core::{
 };
 use kit_paint::{Draw, DrawList, RenderError, paint};
 use kit_view::{
-    Image, ImagePixels, ImageSize, ImageStyle, LaidOut, Placed, Shown, image, testing::text_system,
+    Image, ImagePixels, ImageRegion, ImageRegionError, ImageSize, ImageStyle, LaidOut, Placed,
+    Shown, image, testing::text_system,
 };
 use kit_wgpu::WgpuTarget;
 
@@ -180,4 +181,64 @@ fn straight_pixels_match_premultiplied_unorm_and_srgb_targets() {
             .unwrap();
         near(h.read()[8 * 16 + 8], expected);
     }
+}
+
+/// 2x2: top row red, green; bottom row blue, white.
+fn quadrants() -> ImagePixels {
+    ImagePixels::new(
+        2,
+        2,
+        vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ],
+    )
+    .unwrap()
+}
+
+fn region_list(handle: Image, region: ImageRegion) -> DrawList {
+    DrawList {
+        redraw: kit_core::Redraw::Idle,
+        items: vec![Draw::Image {
+            image: handle,
+            rect: Rect::new(0.0, 0.0, 16.0, 16.0),
+            style: ImageStyle::stretch().region(region),
+        }],
+    }
+}
+
+#[test]
+fn gpu_region_draws_only_its_own_texels() {
+    let mut h = Harness::new(16, 16, 1.0);
+    let handle = h.ui.register_pixels(&quadrants()).unwrap();
+    let mut text = text_system();
+    for ((x, y), expected) in [
+        ((0, 0), [255, 0, 0, 255]),
+        ((1, 0), [0, 255, 0, 255]),
+        ((0, 1), [0, 0, 255, 255]),
+        ((1, 1), [255, 255, 255, 255]),
+    ] {
+        let region = ImageRegion::new(x, y, 1, 1).unwrap();
+        h.frame(Some([0.0; 4]), &region_list(handle, region), &mut text)
+            .unwrap();
+        for px in h.read() {
+            near(px, expected);
+        }
+    }
+}
+
+#[test]
+fn gpu_out_of_bounds_region_is_a_typed_error() {
+    let mut h = Harness::new(16, 16, 1.0);
+    let handle = h.ui.register_pixels(&quadrants()).unwrap();
+    let region = ImageRegion::new(1, 1, 2, 1).unwrap();
+    assert_eq!(
+        h.frame(None, &region_list(handle, region), &mut text_system()),
+        Err(RenderError::ImageRegion {
+            image: handle,
+            error: ImageRegionError::OutOfBounds {
+                region,
+                image: handle.size(),
+            },
+        })
+    );
 }

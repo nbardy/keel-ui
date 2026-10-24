@@ -7,6 +7,6 @@ mod geometry;
 mod painter;
 mod scrollbar;
 
-pub use draw::{Draw, DrawList, RenderError};
+pub use draw::{Draw, DrawList, RenderError, image_texels};
 pub use geometry::{TOFU_STROKE, caret_bar, em, layout_glyphs, place_glyph, tofu_box};
 pub use painter::paint;

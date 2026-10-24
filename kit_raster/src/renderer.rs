@@ -81,13 +81,11 @@ struct Frame<'a> {
 impl Frame<'_> {
     fn draw(&mut self, item: &Draw) -> Result<(), RenderError> {
         match item {
-            Draw::Image { image, rect, style } => crate::image::draw(
-                self.stack.top(),
-                self.images.get(*image)?,
-                *rect,
-                *style,
-                self.scale,
-            ),
+            Draw::Image { image, rect, style } => {
+                let pixels = self.images.get(*image)?;
+                let texels = kit_paint::image_texels(*image, style.crop)?;
+                crate::image::draw(self.stack.top(), pixels, texels, *rect, *style, self.scale)
+            }
             Draw::Fill {
                 shape,
                 brush,
