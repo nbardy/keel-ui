@@ -53,8 +53,8 @@ pub struct TextBridge {
 }
 
 impl TextBridge {
-    /// Attach the element beside `canvas` (a sibling, so its `position: absolute` shares the canvas's containing block
-    /// and page scroll cannot move it) and start listening.
+    /// Attach the element to the canvas's document body and start listening. Viewport positioning keeps it independent
+    /// of the canvas's offset parent (including fixed canvases and canvases in positioned wrappers).
     pub fn attach(
         canvas: &web_sys::HtmlCanvasElement,
         on_entry: impl Fn(Entry) + 'static,
@@ -76,13 +76,16 @@ impl TextBridge {
         area.set_rows(1);
         let style = area.style();
         for (name, value) in [
-            ("position", "absolute"),
+            ("position", "fixed"),
+            ("left", "0px"),
+            ("top", "0px"),
             ("opacity", "0"),
             ("width", "1px"),
             ("height", "1px"),
             ("border", "none"),
             ("outline", "none"),
             ("padding", "0"),
+            ("margin", "0"),
             ("resize", "none"),
             ("overflow", "hidden"),
             ("pointer-events", "none"),
@@ -92,12 +95,10 @@ impl TextBridge {
         ] {
             style.set_property(name, value)?;
         }
-        style.set_property("left", &format!("{}px", canvas.offset_left()))?;
-        style.set_property("top", &format!("{}px", canvas.offset_top()))?;
-        let parent = canvas
-            .parent_node()
-            .ok_or("canvas has no parent to hold the text agent")?;
-        parent.insert_before(&area, canvas.next_sibling().as_ref())?;
+        document
+            .body()
+            .ok_or("canvas document has no body to hold the text agent")?
+            .append_child(&area)?;
 
         let composer = Rc::new(RefCell::new(Composer::default()));
         let on_entry = Rc::new(on_entry);
@@ -200,6 +201,10 @@ impl TextBridge {
                     self.area.blur()?;
                     self.area.set_value("");
                 }
+                // Stale desktop caret coordinates overflowed the phone lobby after blur + resize. Park even when
+                // already blurred; no focused field owns a caret position then.
+                self.area.style().set_property("left", "0px")?;
+                self.area.style().set_property("top", "0px")?;
                 Ok(())
             }
             TextTarget::Field {
@@ -229,22 +234,16 @@ impl TextBridge {
         }
     }
 
-    /// Clamped to the canvas: an element outside it would scroll the page when focused.
+    /// Convert canvas CSS coordinates to viewport coordinates, then constrain the entire 1px element to the viewport.
     fn place(&self, caret: &Rect, canvas: &web_sys::HtmlCanvasElement) -> Result<(), JsValue> {
-        let x = caret
-            .center()
-            .x
-            .clamp(0.0, f64::from(canvas.client_width()));
-        let y = caret
-            .center()
-            .y
-            .clamp(0.0, f64::from(canvas.client_height()));
+        let rect = canvas.get_bounding_client_rect();
+        let x = rect.left() + caret.center().x.clamp(0.0, rect.width());
+        let y = rect.top() + caret.center().y.clamp(0.0, rect.height());
         let style = self.area.style();
-        style.set_property(
-            "left",
-            &format!("{}px", f64::from(canvas.offset_left()) + x),
-        )?;
-        style.set_property("top", &format!("{}px", f64::from(canvas.offset_top()) + y))
+        // Canvas offsets use its own containing block, which need not be the textarea's. CSS clamp also bounds a
+        // stale focused caret immediately during resize, before the host draws its next frame (viewport overflow bug).
+        style.set_property("left", &format!("clamp(0px, {x}px, calc(100% - 1px))"))?;
+        style.set_property("top", &format!("clamp(0px, {y}px, calc(100% - 1px))"))
     }
 
     fn has_focus(&self) -> bool {

@@ -310,6 +310,15 @@ pub(crate) fn request_key<Msg>(
 }
 
 impl Router {
+    /// Hand keyboard ownership to another surface without resetting scroll/gesture memory or
+    /// dismissing a popup. A focused text field receives its normal Blur edit exactly once.
+    pub fn release_focus<Msg>(&self, laid: &LaidOut<Msg>, memory: &mut UiMemory) -> Vec<Msg> {
+        memory.focus = Focus::Unfocused;
+        let mut out = Vec::new();
+        tell(laid, memory, &mut out);
+        out
+    }
+
     /// The host asks, after layout, for focus on the node keyed `id`. A node that is not there, or cannot take focus
     /// here, is counted in `UiMemory::focus_misses` and reported; focus does not move.
     pub fn request_focus<Msg>(
