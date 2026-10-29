@@ -177,14 +177,15 @@ impl<'a, A: Host> Cx<'a, A> {
 
     /// The server's verdict on the latest command of kind `C` that a reducer of `key` sent with `Act::ask_tracked`.
     /// A pending one past `C::WITHIN` reads `Unknown`; while it is still pending this view asks to be redrawn at the
-    /// deadline, so an idle app wakes for it. A key that is not Live has no record: `Unsent`.
+    /// deadline, and `Store::redraw` asks for it too even when no view read it (the frame that sent it drew `Unsent`),
+    /// so an idle app wakes for it. A key that is not Live has no record: `Unsent`.
     pub fn track<C: Command>(&self, key: &impl Ident<A>) -> Verdict<C::Why> {
         self.observe_life(key);
         let id: SlotId<A> = (TypeId::of::<C>(), AnyKey::new(key.clone()));
         match self.store.read::<Tracked<C::Why>>(&id) {
             None => Verdict::Unsent,
             Some(tracked) => {
-                let (verdict, demand) = read_verdict(&tracked, self.app.now());
+                let (verdict, demand) = read_verdict::<C>(&tracked, self.app.now());
                 self.redraw.set(self.redraw.get().earliest(demand));
                 verdict
             }

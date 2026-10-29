@@ -10,7 +10,7 @@
 //! nothing to withdraw.
 use crate::ident::{AnyKey, Host};
 use crate::intent::{Late, LateWhy};
-use crate::store::{Slots, Store, slot_value};
+use crate::store::{Deadlines, Slots, Store, slot_value};
 use core::any::{Any, TypeId};
 use core::fmt::Debug;
 use core::time::Duration;
@@ -69,23 +69,32 @@ pub enum Settled {
 /// connection (the protocol's processed-up-to watermark). A server that may answer out of order must use a distinct
 /// key per send (`Part(key, n)`), which also gives each its own verdict. A send whose reply is lost for good leaves
 /// `owed` too high until the key ends; `Unknown` shows it and the next reply is read as the older one.
+///
+/// The record holds no deadline: it is `since + C::WITHIN`, and the store keeps the newest unanswered send's deadline
+/// in its own typed index (`Store::deadlines`) so `Store::redraw` wakes an idle host for it without downcasting slots.
 #[derive(Clone)]
 pub(crate) struct Tracked<W> {
     verdict: Verdict<W>,
-    deadline: Time,
     owed: u32,
+}
+
+/// When a send made at `since` reads `Unknown`.
+fn deadline(since: Time, within: Duration) -> Time {
+    Time(since.0 + within)
 }
 
 /// A send recorded by a reducer's `Act`, erased so `Act` stays generic only over `Ask` and `Ev`.
 #[derive(Copy, Clone)]
 pub(crate) struct Sent {
     pub(crate) kind: TypeId,
+    within: Duration,
     begin: fn(Option<&dyn Any>, Time) -> Box<dyn Any>,
 }
 impl Sent {
     pub(crate) fn of<C: Command>() -> Self {
         Self {
             kind: TypeId::of::<C>(),
+            within: C::WITHIN,
             begin: begin::<C>,
         }
     }
@@ -104,14 +113,14 @@ fn begin<C: Command>(previous: Option<&dyn Any>, now: Time) -> Box<dyn Any> {
     let owed = previous.map_or(0, |slot| slot_value::<Tracked<C::Why>>(slot).owed);
     Box::new(Rc::new(Tracked::<C::Why> {
         verdict: Verdict::Pending { since: now },
-        deadline: Time(now.0 + C::WITHIN),
         owed: owed + 1,
     }))
 }
 
-/// Record the sends a step made, under the step's own key.
+/// Record the sends a step made, under the step's own key. The newest send's deadline replaces the slot's last one.
 pub(crate) fn record_sent<A: Host>(
     slots: &mut Slots<A>,
+    deadlines: &mut Deadlines<A>,
     key: &AnyKey<A>,
     sent: &[Sent],
     now: Time,
@@ -119,17 +128,21 @@ pub(crate) fn record_sent<A: Host>(
     for send in sent {
         let id = (send.kind, AnyKey::clone(key));
         let next = send.begin(slots.get(&id).map(|slot| &**slot), now);
-        slots.insert(id, next);
+        slots.insert(id.clone(), next);
+        deadlines.insert(id, deadline(now, send.within));
     }
 }
 
 /// The verdict as a view sees it at `now`, and the redraw it needs (the deadline, while still pending).
-pub(crate) fn read<W: Clone>(tracked: &Tracked<W>, now: Time) -> (Verdict<W>, Redraw) {
+pub(crate) fn read<C: Command>(tracked: &Tracked<C::Why>, now: Time) -> (Verdict<C::Why>, Redraw) {
     match &tracked.verdict {
-        Verdict::Pending { since } if now >= tracked.deadline => {
+        Verdict::Pending { since } if now >= deadline(*since, C::WITHIN) => {
             (Verdict::Unknown { since: *since }, Redraw::Idle)
         }
-        Verdict::Pending { .. } => (tracked.verdict.clone(), Redraw::At(tracked.deadline)),
+        Verdict::Pending { since } => (
+            tracked.verdict.clone(),
+            Redraw::At(deadline(*since, C::WITHIN)),
+        ),
         Verdict::Unsent
         | Verdict::Confirmed { .. }
         | Verdict::Refused { .. }
@@ -178,6 +191,8 @@ impl<A: Host> Store<A> {
             0 => Err(LateWhy::Unsent),
             1 => {
                 tracked.owed = 0;
+                // The newest send is answered: nothing is left for the host to wake for.
+                self.deadlines.remove(&id);
                 let at = app.now();
                 tracked.verdict = match outcome {
                     Outcome::Confirmed => Verdict::Confirmed { at },

@@ -235,9 +235,10 @@ fn shop(cx: &Cx<'_, Shop>, theme: &Theme) -> Node<Intent<Shop>> {
 The host's side is one call when a reply arrives: `store.settle::<Buying, _>(&app, &Row(1), Outcome::Confirmed)` (or
 `Outcome::Refused(NoSale::NotEnoughGold)`). It returns `Err` and counts in `store.late()` when the row's key has ended
 or nothing was waiting for the answer, so a reply is never silently dropped. A command still unanswered after
-`Buying::WITHIN` reads `Unknown`, and the view that shows it asks to be redrawn at that time, so an idle app wakes for
-it; a late answer still settles it. Replies are matched to sends in order; if your server can answer out of order, key
-each send separately. The verdict lives with the key: when the item leaves, its verdict is collected.
+`Buying::WITHIN` reads `Unknown`. `Store::redraw` includes the earliest pending command deadline even when no view
+reads its verdict, so an idle app wakes for it; a late answer still settles it. Replies are matched to sends in order;
+if your server can answer out of order, key each send separately. The verdict lives with the key: when the item
+leaves, its verdict is collected.
 
 `cx.read(&resource)` is the same idea for data you load: reading it tells the app to `want` it, and a frame in which no
 view read it tells the app to `release` it, so closing a panel is the cleanup. The app keeps the value (`Resource::state`
@@ -424,7 +425,7 @@ memory.end_frame();
 // when to draw next: every source of time-driven change, combined
 match draws.frame_redraw(view_redraw, store.redraw(&app), memory.redraw(&laid)) {
     Redraw::Now => window.request_redraw(),   // something is moving: a tween, a fling, an exit transition
-    Redraw::At(t) => wake_at(t),              // a timer, the next caret blink, a tooltip's delay
+    Redraw::At(t) => wake_at(t),              // a timer, command timeout, caret blink or tooltip delay
     Redraw::Idle => {}                        // nothing changes until input or an app change: sleep
 }
 ```

@@ -14,6 +14,9 @@ use std::rc::Rc;
 
 pub type SlotId<A> = (TypeId, AnyKey<A>);
 pub type Slots<A> = HashMap<SlotId<A>, Box<dyn Any>>;
+/// The deadline of each tracked slot's newest unanswered send (see `track::Tracked`). Its own typed map, so store
+/// demand needs no downcast of erased slots to find them.
+pub(crate) type Deadlines<A> = HashMap<SlotId<A>, Time>;
 
 /// How many refused intents the Store remembers. Older ones are dropped from the log but still counted.
 pub const LATE_LOG: usize = 64;
@@ -34,6 +37,9 @@ pub struct Store<A: Host> {
     pub(crate) late: VecDeque<Late>,
     pub(crate) late_total: u64,
     pub(crate) faults: Vec<Fault>,
+    /// Pending command deadlines. Written with the tracked slot (`record_sent`), cleared when its newest send is
+    /// answered (`settle`) and collected with the key, so it never names a slot that is gone.
+    pub(crate) deadlines: Deadlines<A>,
     /// Keys whose router-side memory (scroll offsets) is keyed by `WidgetId::of(key)`; collected with the key.
     pub(crate) widgets: RefCell<HashMap<AnyKey<A>, WidgetId>>,
     pub(crate) reads: RefCell<crate::read::Reads<A>>,
@@ -49,6 +55,7 @@ impl<A: Host> Default for Store<A> {
             late: VecDeque::new(),
             late_total: 0,
             faults: Vec::new(),
+            deadlines: HashMap::new(),
             widgets: RefCell::new(HashMap::new()),
             reads: RefCell::new(crate::read::Reads::default()),
             released: Vec::new(),
@@ -95,6 +102,7 @@ impl<A: Host> Store<A> {
             Life::Live | Life::Leaving(_) => true,
         };
         self.slots.get_mut().retain(|(_, key), _| live(key));
+        self.deadlines.retain(|(_, key), _| live(key));
         // A wake-up needs a Live key: a Leaving key is inert (its intents are refused) and an Over one is gone.
         self.timers.retain(|timer| match timer.slot.1.life(app) {
             Life::Live => true,
@@ -125,11 +133,22 @@ impl<A: Host> Store<A> {
             .min()
             .map_or(Redraw::Idle, Redraw::At)
     }
-    /// Store demand: reducer timers, live tweens and keys retained for their exit.
+    /// Store demand: reducer timers, pending command deadlines, live tweens and keys retained for their exit.
     /// Call after building the view, so newly declared/retargeted animations are included.
     pub fn redraw(&self, app: &A) -> Redraw {
         let slots = self.slots.borrow();
-        let mut demand = self.next_due();
+        // A command's timeout used to wake only a view reading `cx.track`. The frame that sends it was built before
+        // the input was routed, so it still showed `Unsent`: without the deadline here an idle host sleeps forever and
+        // never draws `Unknown`. An expired deadline reads `Unknown` already and asks for nothing.
+        let now = app.now();
+        let pending = self
+            .deadlines
+            .values()
+            .copied()
+            .filter(|at| now < *at)
+            .min()
+            .map_or(Redraw::Idle, Redraw::At);
+        let mut demand = self.next_due().earliest(pending);
         for ((declaration, key), value) in slots.iter() {
             if let Life::Leaving(_) = key.life(app) {
                 demand = Redraw::Now;

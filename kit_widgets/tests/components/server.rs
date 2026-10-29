@@ -169,6 +169,164 @@ fn no_answer_becomes_unknown_at_the_deadline_and_wakes_an_idle_app() {
     assert!(has(&h, "Bought"));
 }
 
+/// A frame loop in the starter's order (`examples_shared/starter_app.rs`): collect and fire timers, build the view,
+/// lay out, route this frame's input against that layout, the router's frame step, paint.
+struct Frames {
+    store: kit_state::Store<Shop>,
+    theme: Theme,
+    viewport: kit_core::Viewport,
+    text: kit_view::CosmicText,
+    layout: kit_layout::TaffyLayout,
+    router: kit_input::Router,
+    memory: kit_input::UiMemory,
+}
+impl Frames {
+    fn new() -> Self {
+        let viewport = kit_core::Viewport::new(kit_core::kurbo::Size::new(420.0, 200.0), 1.0);
+        Self {
+            store: kit_state::Store::new(),
+            theme: kit_test::theme(),
+            viewport,
+            text: kit_view::testing::text_system(),
+            layout: kit_layout::TaffyLayout::new(),
+            router: kit_input::Router::default(),
+            memory: kit_input::UiMemory::new(viewport),
+        }
+    }
+    /// One frame: the text it drew and its combined demand, which is all an event-driven host sleeps on.
+    fn frame(
+        &mut self,
+        app: &mut Shop,
+        events: Vec<kit_input::InputEvent>,
+    ) -> (Vec<String>, Redraw) {
+        self.store.collect(app);
+        kit_state::wake_due(app, &mut self.store);
+        let cx = Cx::routed(app, &self.store, &self.memory);
+        let root = shop(&cx, &self.theme);
+        let view_redraw = cx.redraw();
+        let laid = self
+            .layout
+            .layout(root, self.viewport, &mut self.text, &kit_view::NoWorld)
+            .unwrap();
+        for event in events {
+            for intent in self
+                .router
+                .route(&laid, &mut self.memory, event, app.now)
+                .messages()
+            {
+                kit_state::dispatch(app, &mut self.store, intent);
+            }
+        }
+        self.router.frame(&laid, &mut self.memory, app.now);
+        self.memory.end_frame();
+        let input_redraw = self.memory.redraw(&laid);
+        let draws = kit_paint::paint(&laid, &self.memory, &self.theme, app.now);
+        let demand = draws.frame_redraw(view_redraw, self.store.redraw(app), input_redraw);
+        let mut texts = Vec::new();
+        for node in laid.root.descendants() {
+            if let kit_view::LaidKind::Text { layout, .. } = &node.kind {
+                let lines = &self.text.buffer(layout.id).unwrap().lines;
+                texts.extend(lines.iter().map(|line| line.text().to_string()));
+            }
+        }
+        (texts, demand)
+    }
+    /// An event-driven host: draw again at once on `Now` (a 16 ms frame later), return on `At` or `Idle`. It never
+    /// forces a tick: what happens next is up to the caller honouring the returned demand.
+    fn settle(
+        &mut self,
+        app: &mut Shop,
+        events: Vec<kit_input::InputEvent>,
+    ) -> (Vec<String>, Redraw) {
+        let mut drawn = self.frame(app, events);
+        for _ in 0..120 {
+            match drawn.1 {
+                Redraw::Now => app.now = Time(app.now.0 + Duration::from_millis(16)),
+                Redraw::At(_) | Redraw::Idle => return drawn,
+            }
+            drawn = self.frame(app, Vec::new());
+        }
+        panic!("the frame loop never settled");
+    }
+}
+
+/// The starter builds before routing input, so the frame whose Enter sends a command drew the row as it was (Unsent):
+/// that view asked for no deadline, and a keyboard press on an already focused button changes nothing else the router
+/// or painter would wake for. Only the store's demand wakes the idle host to draw `Unknown`.
+/// Mutant: omit tracked deadlines in Store::redraw; the frame's demand is Idle and the loop sleeps forever.
+#[test]
+fn store_demand_wakes_the_app_to_draw_a_tracked_timeout() {
+    use kit_input::{InputEvent, NavAction};
+    let mut app = store();
+    app.now = secs(10);
+    let mut frames = Frames::new();
+    let focused = frames.settle(&mut app, vec![InputEvent::Nav(NavAction::Next)]);
+    assert_eq!(
+        focused.1,
+        Redraw::Idle,
+        "a focused, settled shop asks for nothing"
+    );
+
+    let sent_at = app.now;
+    let (drawn, demand) = frames.frame(&mut app, vec![InputEvent::Nav(NavAction::Activate)]);
+    assert_eq!(app.sent, [Buy(1)]);
+    assert!(
+        !drawn.iter().any(|t| t == "Buying..."),
+        "the send's frame drew the pre-send view"
+    );
+    match demand {
+        Redraw::At(deadline) => app.now = deadline,
+        Redraw::Idle => {}
+        Redraw::Now => panic!("a pending command must sleep until its deadline, not spin"),
+    }
+    assert_eq!(
+        app.now,
+        Time(sent_at.0 + Buying::WITHIN),
+        "the store woke the host at the deadline"
+    );
+
+    let (drawn, demand) = frames.settle(&mut app, Vec::new());
+    assert!(
+        drawn.iter().any(|t| t == "No answer from the server"),
+        "{drawn:?}"
+    );
+    assert_eq!(
+        demand,
+        Redraw::Idle,
+        "an expired command must not keep the host awake"
+    );
+}
+
+/// Replacement, superseded replies, settlement and collection must all change the same canonical deadline.
+#[test]
+fn store_tracks_the_earliest_unanswered_send_until_it_is_answered_or_collected() {
+    let mut h = Handle::new(store(), (420.0, 200.0), shop);
+    h.click(Role::Button, "Buy 1");
+    h.tick(|app| app.now = secs(1));
+    h.click(Role::Button, "Buy 2");
+    h.tick(|app| app.now = secs(2));
+    h.click(Role::Button, "Buy 1");
+    assert_eq!(h.store().redraw(h.app()), Redraw::At(secs(6)));
+    let superseded =
+        h.host(|app, store| store.settle::<Buying, _>(app, &Row(1), Outcome::Confirmed));
+    assert_eq!(superseded, Ok(kit_state::Settled::Superseded));
+    h.host(|app, store| {
+        store
+            .settle::<Buying, _>(app, &Row(2), Outcome::Refused(NoSale::NotEnoughGold))
+            .unwrap()
+    });
+    assert_eq!(h.store().redraw(h.app()), Redraw::At(secs(7)));
+    h.tick(|app| app.items.retain(|&id| id != 1));
+    assert_eq!(h.store().redraw(h.app()), Redraw::Idle);
+    h.click(Role::Button, "Buy 2");
+    h.host(|app, store| {
+        store
+            .settle::<Buying, _>(app, &Row(2), Outcome::Confirmed)
+            .unwrap()
+    });
+    assert_eq!(h.store().redraw(h.app()), Redraw::Idle);
+}
+
 /// An answer for a row the server has since dropped is refused and counted, and the record went with the key: the
 /// item coming back shows no stale verdict. Mutant: `settle` skips the life check and the answer lands (or panics) on
 /// a collected slot; collect nothing and "Bought" greets the returning item.

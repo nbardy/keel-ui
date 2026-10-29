@@ -179,6 +179,7 @@ pub fn dispatch<A: Host>(app: &mut A, store: &mut Store<A>, intent: Intent<A>) {
                     store.faults.extend(effects.faults);
                     record_sent(
                         store.slots.get_mut(),
+                        &mut store.deadlines,
                         &effects.slot.1,
                         &effects.sent,
                         app.now(),

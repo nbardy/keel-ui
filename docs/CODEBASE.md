@@ -88,7 +88,7 @@ page), `tray.rs` (211), `icons.rs` (395); `keel/hosts/host_web/src/kit_ui.rs` (5
 | Layout | `TaffyLayout::layout(Node, Viewport, text, projector) -> LaidOut` | kit_layout | Concrete, not a trait (PLANNED; the `LayoutEngine` generic still exists at `hud.rs` and `keel_preview/hud_ui.rs`) |
 | Text | `CosmicText` (`buffer(id) -> &Buffer`, `rasterize`) | kit_text | Trait removal PLANNED; `NullText` goes, tests load the bundled Inter subset |
 | Paint | `paint(&LaidOut, &UiMemory, &Theme, Time) -> DrawList` | kit_paint | Typed draw vocabulary includes images and carets |
-| Render | `WgpuUi::begin_frame(&mut text, viewport) -> UiFrame`; `RasterUi` for CPU | kit_wgpu / kit_raster | `UiFrame` drop is the atlas fence (`frame_submitted()`) |
+| Render | `WgpuUi::begin_frame(&mut text, viewport) -> UiFrame`; `RasterUi` for CPU | kit_wgpu / kit_raster | `UiFrame::submitted(queue.submit(..))` fences the atlas (`frame_submitted()`) |
 | Input | `Router::route(&LaidOut, &mut UiMemory, InputEvent, Time) -> Routing<Msg>` | kit_input | `Handled` / `Captured` / `Passed` |
 | State | `Cx`, `Store`, `dispatch` | kit_state | Renderer-agnostic; never names `Node` |
 
@@ -129,7 +129,7 @@ outside a grid is `LayoutError::CellOutsideGrid`.
 Per frame, in order: (1) route events against the previous frame's `LaidOut` (so a press hits what the player saw);
 (2) `dispatch` each intent; the app forwards asks to the delivery queue; (3) build the `Node` tree from the app model;
 (4) lay out at the frame's single viewport; (5) paint to a `DrawList`; (6) render into the host's encoder; (7) after the
-host submits, `UiFrame` drops and `frame_submitted()` fences the atlas (an unsubmitted encoder must not see a recycled
+host submits, `UiFrame::submitted` fences the atlas (an unsubmitted encoder must not see a recycled
 page). Set `LaidOut::epoch` when a screen or turn is replaced so a drag begun under another epoch never fires.
 Budget: HUD build+layout ~23 us (58 nodes, measured on the taffy path), 5 draw calls in 1 pass for the captain HUD.
 
@@ -142,6 +142,15 @@ Server round trip for one command, as it will look with the ledger (PLANNED part
 4. Client folds the body into the replica. PLANNED: the ledger marks the ask `Confirmed` / `Refused` / `Unknown` /
    `Withdrawn`; `cx.track` reads it; the preview derives from the ledger's in-doubt suffix. BUILT without the ledger: `Act::ask_tracked` marks the send, `Store::settle` takes the host's verdict, `cx.track` reads it (Pending, Confirmed, Refused(why), Unknown after `Command::WITHIN`, or Unsent).
 5. If the owning key's life ends first: state removed; unsent ask withdrawn (PLANNED); sent ask orphaned until answered.
+
+`Store::redraw` includes the earliest pending command deadline, independently of views reading `cx.track`. The store
+keeps each tracked slot's newest unanswered deadline in its own typed map beside the erased slots, so finding them
+needs no downcast. Settling the newest send removes its demand; a superseded reply leaves the newest deadline intact.
+Expired commands read `Unknown` without keeping the host awake, and a late reply can still settle them. The real frame
+loop regression in `kit_widgets/tests/components/server.rs` sleeps on store demand and draws the timeout verdict.
+`kit_web/check_browser.mjs` uses its own headless full Chrome on a free local port with CDP clipboard permissions. It
+drives real clipboard copy/paste for Promise and synchronous write returns, both paste arrival orders, an unasked
+paste, and reports from unsupported, throwing and rejected writes.
 
 ## 4. Where state lives: four layers, one writer each
 
