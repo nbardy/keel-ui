@@ -14,7 +14,7 @@ use lyon::path::Path;
 use lyon::tessellation::{
     BuffersBuilder, FillOptions, FillRule, FillTessellator, FillVertex, VertexBuffers,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 const FRINGE: f32 = 0.5;
@@ -188,8 +188,13 @@ struct BoundaryEdge {
 }
 
 fn boundary_edges(points: &[[f32; 2]], indices: &[u32]) -> Vec<BoundaryEdge> {
-    // (count, edge as first seen) keyed by the unordered vertex pair
-    let mut seen: HashMap<(u32, u32), (u32, BoundaryEdge)> = HashMap::new();
+    // Edges as first seen, in triangle order, with a use count; `slot_of` only looks up, it is never iterated.
+    // Regression (keel_gallery, 2026-11-01): this was a HashMap drained with `into_values()`. Std's per-map random
+    // seed made the edge order, hence the float sum order of the per-vertex normals and the fringe triangle draw
+    // order, differ between processes: one anti-aliased icon pixel flipped by 1/255 between otherwise identical
+    // runs (`independent_runs_produce_identical_png_bytes`). Never iterate a HashMap on a path that builds meshes.
+    let mut counted: Vec<(u32, BoundaryEdge)> = Vec::new();
+    let mut slot_of: HashMap<(u32, u32), usize> = HashMap::new();
     for tri in indices.chunks_exact(3) {
         let [a, b, c] = [tri[0], tri[1], tri[2]];
         let (pa, pb, pc) = (points[a as usize], points[b as usize], points[c as usize]);
@@ -211,12 +216,17 @@ fn boundary_edges(points: &[[f32; 2]], indices: &[u32]) -> Vec<BoundaryEdge> {
                 [-dy / len, dx / len]
             };
             let key = (u.min(v), u.max(v));
-            seen.entry(key)
-                .and_modify(|e| e.0 += 1)
-                .or_insert((1, BoundaryEdge { a: u, b: v, normal }));
+            match slot_of.get(&key) {
+                Some(&slot) => counted[slot].0 += 1,
+                None => {
+                    slot_of.insert(key, counted.len());
+                    counted.push((1, BoundaryEdge { a: u, b: v, normal }));
+                }
+            }
         }
     }
-    seen.into_values()
+    counted
+        .into_iter()
         .filter(|(count, _)| *count == 1)
         .map(|(_, e)| e)
         .collect()
@@ -225,7 +235,8 @@ fn boundary_edges(points: &[[f32; 2]], indices: &[u32]) -> Vec<BoundaryEdge> {
 fn feather(points: &[[f32; 2]], indices: &[u32]) -> Mesh {
     let edges = boundary_edges(points, indices);
     // Accumulated edge normals and edge count per boundary vertex.
-    let mut acc: HashMap<u32, ([f32; 2], f32)> = HashMap::new();
+    // Ordered by vertex id: the outer vertices' indices and the sums above must not depend on hash seeds.
+    let mut acc: BTreeMap<u32, ([f32; 2], f32)> = BTreeMap::new();
     for e in &edges {
         for v in [e.a, e.b] {
             let slot = acc.entry(v).or_insert(([0.0, 0.0], 0.0));
@@ -346,5 +357,35 @@ impl TessCache {
         let mesh = Arc::new(mesh);
         self.meshes.insert(key, (mesh.clone(), generation));
         Ok(mesh)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kit_core::kurbo::{Circle, Shape as _};
+
+    /// Regression (keel_gallery, 2026-11-01): feathering iterated std HashMaps, whose random seeds differ per map,
+    /// so the same path produced differently ordered meshes (and float sums) on every call. Each `HashMap::new()`
+    /// draws a fresh seed, so repeated calls in ONE process expose it without needing separate processes.
+    #[test]
+    fn feathering_is_bit_identical_across_calls() {
+        let mut path = Circle::new((40.0, 30.0), 17.3).to_path(0.1);
+        path.extend(Circle::new((60.0, 33.0), 9.1).to_path(0.1));
+        let mut tess = FillTessellator::new();
+        let key = |mesh: &Mesh| {
+            (
+                mesh.verts
+                    .iter()
+                    .flatten()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>(),
+                mesh.indices.clone(),
+            )
+        };
+        let first = key(&fill_mesh(&mut tess, &path).expect("tessellates"));
+        for _ in 0..16 {
+            assert!(key(&fill_mesh(&mut tess, &path).expect("tessellates")) == first);
+        }
     }
 }
