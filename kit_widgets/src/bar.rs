@@ -4,6 +4,7 @@ use kit_core::Theme;
 use kit_core::kurbo::RoundedRectRadii;
 use kit_core::peniko::Color;
 use kit_view::{Node, Percent, Style, px, rounded, stack};
+use std::num::NonZeroU32;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum GaugeError {
@@ -33,6 +34,14 @@ impl Gauge {
             value: value.clamp(0.0, max),
             max,
         })
+    }
+    /// A whole-number quantity (hull, ticks, XP) against a maximum that is positive by type, so construction cannot
+    /// fail and no call site needs an `expect`. `value` over `max` is full, as in `new`.
+    pub fn of_whole(value: u32, max: NonZeroU32) -> Self {
+        Self {
+            value: f64::from(value.min(max.get())),
+            max: f64::from(max.get()),
+        }
     }
     pub fn fraction(self) -> f64 {
         self.value / self.max

@@ -26,6 +26,14 @@ fn icon_that_draws_before_any_move_is_rejected() {
 #[test]
 fn malformed_gauge_input_is_a_typed_error() {
     assert_eq!(Gauge::new(1.0, 0.0), Err(GaugeError::BadMax));
+    let max = std::num::NonZeroU32::new(120).unwrap();
+    assert_eq!(Gauge::of_whole(30, max).fraction(), 0.25);
+    assert_eq!(
+        Gauge::of_whole(500, max).fraction(),
+        1.0,
+        "over-full is full"
+    );
+    assert_eq!(Gauge::of_whole(30, max), Gauge::new(30.0, 120.0).unwrap());
 }
 
 /// A tile named `label`, `x` px from the left, configured by the builder chain under test.
