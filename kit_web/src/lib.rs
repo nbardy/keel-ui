@@ -5,7 +5,7 @@
 //! string, a pointer's numbers) so the conversions are tested natively without a browser; `cfg(target_arch =
 //! "wasm32")` code only reads those values off DOM events and calls them.
 //!
-//! ```ignore
+//! ```text
 //! // wasm only: `Gpu` is the device, queue and colour format the host made for the canvas.
 //! let running = kit_web::start(canvas, |gpu, viewport, platform| MyApp::new(gpu, viewport, platform)).await?;
 //! ```

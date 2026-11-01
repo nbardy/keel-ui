@@ -12,6 +12,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+# The only doc example is `text` (it needs a window/GPU/browser): rustdoc's per-crate doctest pass was pure cost.
+[lib]
+doctest = false
+
 [dependencies]
 kit_core.workspace = true
 kit_view.workspace = true

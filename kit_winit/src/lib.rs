@@ -4,7 +4,7 @@
 //! Small on purpose: copy it into your crate when you need a different policy (another mouse button as a press,
 //! another pointer-id scheme).
 //!
-//! ```ignore
+//! ```text
 //! let mut input = kit_winit::Input::new(window.inner_size(), window.scale_factor());
 //! // in `ApplicationHandler::window_event`:
 //! pending.extend(input.convert(&event));          // route these against the frame the player saw

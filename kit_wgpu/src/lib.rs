@@ -3,7 +3,7 @@
 //!
 //! # Use
 //! Prefer [`UiFrame`] (`WgpuUi::begin_frame`), which owns the frame lifecycle below; the raw calls are:
-//! ```ignore
+//! ```text
 //! let mut ui = WgpuUi::new(device.clone(), queue.clone(), format);
 //! // after the game scene, same encoder, same texture (existing pixels are kept):
 //! ui.render(&list, &mut text, WgpuTarget { encoder: &mut encoder, surface: &surface })?;

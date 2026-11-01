@@ -13,6 +13,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+# The only doc example is `text` (it needs a window/GPU/browser): rustdoc's per-crate doctest pass was pure cost.
+[lib]
+doctest = false
+
 # The conversions are plain functions over plain values and build natively (their tests run natively). Everything
 # that touches the browser is behind `cfg(target_arch = "wasm32")`, so no native build sees wasm-bindgen, js-sys or
 # web-sys (CI checks this for every kit crate).
