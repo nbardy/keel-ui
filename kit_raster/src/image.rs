@@ -66,7 +66,12 @@ pub(crate) fn draw(
     for (row, dst_row) in tile.data_mut().chunks_exact_mut(rw * 4).enumerate() {
         let start = (texels.y() as usize + row) * stride + first_column;
         let src_row = &pixels.rgba()[start..start + rw * 4];
-        for (src, dst) in src_row.chunks_exact(4).zip(dst_row.chunks_exact_mut(4)) {
+        for (src, dst) in src_row
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(dst_row.as_chunks_mut::<4>().0)
+        {
             let a = f32::from(src[3]) / 255.0 * ta;
             for (i, tint) in [tr, tg, tb].into_iter().enumerate() {
                 dst[i] = (f32::from(src[i]) * tint * a).round() as u8;

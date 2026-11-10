@@ -434,10 +434,12 @@ fn colour_emoji_rasterises_as_colour() {
     // Premultiplied invariant: no channel exceeds alpha.
     assert!(
         img.data
-            .chunks_exact(4)
-            .all(|p| p[0] <= p[3] && p[1] <= p[3] && p[2] <= p[3])
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|&[r, g, b, a]| r <= a && g <= a && b <= a)
     );
-    assert!(img.data.chunks_exact(4).any(|p| p[3] == 255));
+    assert!(img.data.as_chunks::<4>().0.iter().any(|p| p[3] == 255));
 }
 
 #[test]

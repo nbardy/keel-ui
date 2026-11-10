@@ -29,7 +29,13 @@ pub fn tile(image: &GlyphImage, ink: &Paint<'_>) -> Result<Pixmap, RenderError> 
             let full = Rect::from_xywh(0.0, 0.0, w as f32, h as f32)
                 .ok_or_else(|| unsupported("glyph tile rect"))?;
             tile.fill_rect(full, ink, Transform::identity(), None);
-            for (px, coverage) in tile.data_mut().chunks_exact_mut(4).zip(&image.data) {
+            for (px, coverage) in tile
+                .data_mut()
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(&image.data)
+            {
                 for channel in px {
                     *channel = scale255(*channel, *coverage);
                 }

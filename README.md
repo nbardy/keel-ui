@@ -345,7 +345,7 @@ maturity matter most; choose the kit when you prefer a component tree with data-
 - **Server-authority helpers are small.** `cx.track` and `cx.read` hold a verdict and a subscription; they do not
   queue, retry or withdraw commands, keep a ledger of in-doubt commands, or fold a preview over them. Your app still
   sends, and your host still fetches and reports (see "Did the server accept it?").
-- **Requirements:** wgpu 30, Rust 1.97 (edition 2024). WebGPU only on the web; there is no WebGL2 path.
+- **Requirements:** wgpu 30, Rust 1.99 (edition 2024). WebGPU only on the web; there is no WebGL2 path.
 
 ## Drawing into your frame
 

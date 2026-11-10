@@ -139,7 +139,9 @@ impl Harness {
         data.chunks_exact(padded as usize)
             .flat_map(|row| {
                 row[..(w * 4) as usize]
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|p| [p[0], p[1], p[2], p[3]])
                     .collect::<Vec<_>>()
             })

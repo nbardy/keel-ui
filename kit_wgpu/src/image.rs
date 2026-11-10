@@ -59,9 +59,11 @@ impl Images {
         });
         let bytes: Vec<u8> = pixels
             .rgba()
-            .chunks_exact(4)
-            .flat_map(|px| {
-                let color = Color::from_rgba8(px[0], px[1], px[2], px[3]);
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|&[r, g, b, a]| {
+                let color = Color::from_rgba8(r, g, b, a);
                 let mut rgba = out.premul(color, 1.0);
                 if out == Output::Srgb {
                     for c in &mut rgba[..3] {

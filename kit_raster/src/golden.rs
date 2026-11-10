@@ -261,9 +261,11 @@ fn diff(expected: &Pixmap, actual: &Pixmap, tolerance: Tolerance) -> Diff {
     let (mut differing, mut worst) = (0usize, 0u8);
     let pixels = expected
         .data()
-        .chunks_exact(4)
-        .zip(actual.data().chunks_exact(4));
-    for ((e, a), out) in pixels.zip(picture.data_mut().chunks_exact_mut(4)) {
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(actual.data().as_chunks::<4>().0);
+    for ((e, a), out) in pixels.zip(picture.data_mut().as_chunks_mut::<4>().0) {
         let delta = e
             .iter()
             .zip(a)

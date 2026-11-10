@@ -466,7 +466,7 @@ fn hanging_whitespace(run: &LayoutRun<'_>) -> f64 {
 }
 
 fn premultiply(mut rgba: Vec<u8>) -> Vec<u8> {
-    rgba.chunks_exact_mut(4).for_each(|p| {
+    rgba.as_chunks_mut::<4>().0.iter_mut().for_each(|p| {
         let a = u32::from(p[3]);
         p[..3]
             .iter_mut()

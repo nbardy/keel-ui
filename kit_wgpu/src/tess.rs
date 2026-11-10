@@ -195,8 +195,7 @@ fn boundary_edges(points: &[[f32; 2]], indices: &[u32]) -> Vec<BoundaryEdge> {
     // runs (`independent_runs_produce_identical_png_bytes`). Never iterate a HashMap on a path that builds meshes.
     let mut counted: Vec<(u32, BoundaryEdge)> = Vec::new();
     let mut slot_of: HashMap<(u32, u32), usize> = HashMap::new();
-    for tri in indices.chunks_exact(3) {
-        let [a, b, c] = [tri[0], tri[1], tri[2]];
+    for &[a, b, c] in indices.as_chunks::<3>().0 {
         let (pa, pb, pc) = (points[a as usize], points[b as usize], points[c as usize]);
         let cross = (pb[0] - pa[0]) * (pc[1] - pa[1]) - (pb[1] - pa[1]) * (pc[0] - pa[0]);
         if cross == 0.0 {
