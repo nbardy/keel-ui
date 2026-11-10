@@ -1035,7 +1035,6 @@ dependencies = [
  "cosmic-text",
  "kit_core",
  "kit_state",
- "swash",
  "unicode-segmentation",
 ]
 
