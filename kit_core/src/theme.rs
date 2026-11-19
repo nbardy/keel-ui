@@ -84,6 +84,19 @@ pub struct ControlSizes {
     pub tile: (f64, f64),
     /// The one action a screen is about: ready to sail, launch.
     pub hero: (f64, f64),
+    /// How tall a text-bearing button's drawn face is (see [`TextHeight`]).
+    pub text_height: TextHeight,
+}
+
+/// How tall the drawn face of a text-bearing button is. The hit rectangle is always the role's height (the layout
+/// wrapper takes the button's minimum size), but a face is laid at its content's height: an icon row came out 32 px
+/// inside a 48 px hit rectangle, and a person aims at what they see (the touch layout's decision 154).
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum TextHeight {
+    /// The face is as tall as its icon, text and padding (the desktop look every golden was blessed with).
+    Content,
+    /// The face is padded to the role's height, so the drawn face is the hit rectangle (touch).
+    Role,
 }
 
 /// Motion durations. Under `MotionPref::Reduced` every accessor returns zero, so animations snap.
@@ -181,6 +194,7 @@ impl Theme {
                 compact: (44.0, 48.0),
                 tile: (56.0, 60.0),
                 hero: (68.0, 64.0),
+                text_height: TextHeight::Content,
             },
             motion: Motion {
                 pref: motion,

@@ -575,6 +575,12 @@ impl<'a> Planner<'a> {
     }
 
     fn mesh_item(&mut self, mesh: &Mesh, color: Color, m: f32) {
+        // A path that tessellates to nothing (a degenerate or fully clipped shape) draws nothing. Queuing it anyway left a
+        // zero-length index range at the end of the arena, and `buffer.slice(at..)` of an empty range panics in wgpu
+        // ("buffer slice can not be empty"): batch 10's Loadout sheet crashed the client that way (2026-11-19).
+        if mesh.indices.is_empty() {
+            return;
+        }
         let c = self.out.premul(color, m * mesh.alpha_scale);
         let verts = mesh
             .verts

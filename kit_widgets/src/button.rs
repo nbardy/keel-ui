@@ -3,7 +3,7 @@ use crate::common::{anchors_box, ink, pad, pinned, surface, tabular};
 use crate::icon::Icon;
 use kit_core::kurbo::{Size, Vec2};
 use kit_core::peniko::Color;
-use kit_core::{Border, Identity, Shadow, Theme, WidgetId};
+use kit_core::{Border, Identity, Shadow, TextHeight, Theme, WidgetId};
 use kit_view::{
     A11y, AnchorH, AnchorV, Bindings, DragPayload, Dropped, Node, Role, Shortcut, Style, Toggle,
     Tooltip, Weight, panel as surface_node, px, taffy as tf, text,
@@ -470,7 +470,15 @@ impl<Msg> From<Button<'_, Msg>> for Node<Msg> {
                     icon.node(Style::column().sized(glyph, glyph), look.ink),
                     words(theme, &label, look.ink),
                 ];
-                shell(theme, size, Style::row(), content, hotkey, look, overlays)
+                shell(
+                    theme,
+                    (size, glyph),
+                    Style::row(),
+                    content,
+                    hotkey,
+                    look,
+                    overlays,
+                )
             }
             Face::Card { icon, name, detail } => {
                 let glyph = size.height * CARD_GLYPH;
@@ -481,7 +489,7 @@ impl<Msg> From<Button<'_, Msg>> for Node<Msg> {
                 ];
                 shell(
                     theme,
-                    size,
+                    (size, 0.0),
                     Style::column(),
                     content,
                     hotkey,
@@ -514,21 +522,30 @@ fn note<Msg>(theme: &Theme, content: &str, look: Look) -> Node<Msg> {
     )
 }
 
-/// A text-bearing button: content flowed in `direction`, centred, at least `size`, growing with its words.
+/// A text-bearing button: content flowed in `direction`, centred, at least `size`, growing with its words. `face` is the
+/// role's size and the height of the tallest item in `content` (zero when the content is taller than any role).
 fn shell<Msg>(
     theme: &Theme,
-    size: Size,
+    face: (Size, f64),
     direction: Style,
     content: Vec<Node<Msg>>,
     hotkey: Hotkey<'_>,
     look: Look,
     overlays: Vec<Node<Msg>>,
 ) -> Node<Msg> {
+    let (size, content_height) = face;
+    // `min_size` below sizes the wrapper (the hit rectangle); this face is laid at its content's height. Where the theme
+    // says the face is the hit rectangle (`TextHeight::Role`), pad it to the role's height: no engine rule changes, so
+    // the `Content` look is untouched.
+    let pad_y = match theme.controls.text_height {
+        TextHeight::Content => theme.spacing.sm,
+        TextHeight::Role => ((size.height - content_height) / 2.0).max(theme.spacing.sm),
+    };
     let mut style = direction
         .gap(theme.spacing.sm)
         .align_items(tf::AlignItems::CENTER)
         .justify(tf::JustifyContent::CENTER)
-        .padded_xy(theme.spacing.md, theme.spacing.sm);
+        .padded_xy(theme.spacing.md, pad_y);
     style.layout.min_size = tf::Size {
         width: px(size.width),
         height: px(size.height),

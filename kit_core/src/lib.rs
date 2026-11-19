@@ -20,6 +20,7 @@ pub use redraw::Redraw;
 pub use scroll::ScrollView;
 pub use shape::{Axis, Border, Clip, Shadow, Shape, ShapeSpec, Surface};
 pub use theme::{
-    ColorVision, ControlSizes, Motion, MotionPref, Palette, Radii, Spacing, Theme, TypeScale,
+    ColorVision, ControlSizes, Motion, MotionPref, Palette, Radii, Spacing, TextHeight, Theme,
+    TypeScale,
 };
 pub use units::{Epoch, Time, Viewport};
