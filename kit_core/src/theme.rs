@@ -86,6 +86,16 @@ pub struct ControlSizes {
     pub hero: (f64, f64),
     /// How tall a text-bearing button's drawn face is (see [`TextHeight`]).
     pub text_height: TextHeight,
+    /// Whether a button draws its keyboard shortcut's letter in its corner (see [`KeyHints`]).
+    pub key_hints: KeyHints,
+}
+
+/// Whether a bound shortcut's letter is drawn on its button. Touch has no keyboard to read it from (decision 154): the
+/// shortcut still works, the letter is not drawn.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum KeyHints {
+    Drawn,
+    Hidden,
 }
 
 /// How tall the drawn face of a text-bearing button is. The hit rectangle is always the role's height (the layout
@@ -195,6 +205,7 @@ impl Theme {
                 tile: (56.0, 60.0),
                 hero: (68.0, 64.0),
                 text_height: TextHeight::Content,
+                key_hints: KeyHints::Drawn,
             },
             motion: Motion {
                 pref: motion,

@@ -3,7 +3,7 @@ use crate::common::{anchors_box, ink, pad, pinned, surface, tabular};
 use crate::icon::Icon;
 use kit_core::kurbo::{Size, Vec2};
 use kit_core::peniko::Color;
-use kit_core::{Border, Identity, Shadow, TextHeight, Theme, WidgetId};
+use kit_core::{Border, Identity, KeyHints, Shadow, TextHeight, Theme, WidgetId};
 use kit_view::{
     A11y, AnchorH, AnchorV, Bindings, DragPayload, Dropped, Node, Role, Shortcut, Style, Toggle,
     Tooltip, Weight, panel as surface_node, px, taffy as tf, text,
@@ -452,9 +452,9 @@ impl<Msg> From<Button<'_, Msg>> for Node<Msg> {
             Shortcut::Unbound => String::new(),
             Shortcut::Key(key) => key.hint(),
         };
-        let hotkey = match shortcut {
-            Shortcut::Unbound => Hotkey::NoHint,
-            Shortcut::Key(_) => Hotkey::Key(&hint),
+        let hotkey = match (shortcut, theme.controls.key_hints) {
+            (Shortcut::Unbound, _) | (Shortcut::Key(_), KeyHints::Hidden) => Hotkey::NoHint,
+            (Shortcut::Key(_), KeyHints::Drawn) => Hotkey::Key(&hint),
         };
         let size = size.px(theme);
         let state = Button::state(press, enabled, display, toggle == Toggle::On);
